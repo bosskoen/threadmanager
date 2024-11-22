@@ -1,0 +1,1 @@
+this app is consol app disined to manige multiple prosseses that run perioticlie.
