@@ -1,17 +1,13 @@
-mod error_handeler;
+pub mod error_handeler;
 
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
+use std::any::Any;
+
+pub trait Status: Send + Sync {
+    fn format(&self) -> String;
+
+    fn as_any_mut(&mut self) -> &mut dyn Any;
 }
-
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
 }
