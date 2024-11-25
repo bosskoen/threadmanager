@@ -1,2 +1,3 @@
 # Ignore custom target folder
 /builds/
+/database/
