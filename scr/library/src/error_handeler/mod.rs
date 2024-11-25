@@ -61,7 +61,7 @@ pub fn error_catchloop(resever:Receiver<ErrorOperation>,status: Arc<Mutex<Box<dy
             ErrorOperation::Print(mesiges) => {
                 eprintln!("{mesiges}");
                 update_status(&status, ChangeColor::No);
-        },
+            },
             ErrorOperation::ChangLed(rgb) => {
                 //TODO cangled
                 update_status(&status, ChangeColor::Yes(rgb));
