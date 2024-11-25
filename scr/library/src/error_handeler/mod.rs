@@ -1,7 +1,8 @@
 mod led_controller;
 
 use std::{process::exit, sync::{mpsc::Receiver, Arc, Mutex}};
-use super::Status;
+use chrono::{DateTime, Local};
+use crate::{format_duration, Status};
 
 pub use led_controller::RGB;
 
@@ -11,11 +12,18 @@ enum ChangeColor {
 }
 struct ErrorStatus{
     errors: usize,
-    color: RGB
+    color: RGB,
+    start_time: DateTime<Local>
 }
 impl Status for ErrorStatus {
     fn format(&self) -> String{
-        format!("Error thread prossesed {} errors.\nLed color is now {}", self.errors, self.color.to_hex())
+        format!(
+            "Error thread prossesed {} errors.\n
+            Led color is now {}.\n
+            thread started at {} and is now running for {}", 
+            self.errors, self.color.to_hex(), 
+            self.start_time.format("%Y %m-%d; %H:%M:%S"), 
+           format_duration(self.start_time, Local::now()))
     }
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
@@ -25,7 +33,8 @@ impl ErrorStatus {
     fn new() -> Self{
         Self{
             errors: 0,
-            color: RGB::from_hex(0x28db09)
+            color: RGB::from_hex(0x28db09),
+            start_time: Local::now()
         }
     }
 }

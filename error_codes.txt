@@ -1,0 +1,5 @@
+100: kon niet de lock kreigen om de errorstatus the initializeren
+101: kon niet de lock kreigen om de errorstatus the updaten
+102: kon type dyn Status niet omzetten naar ErrorStatus type
+103: ErrorThread's resever channel was dropt voor dat hij de stop messige gekregen had
+104: ErrorThread paniced tijdes het afsluiten
