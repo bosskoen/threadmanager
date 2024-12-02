@@ -72,7 +72,8 @@ pub fn write_database<T>(conn: &mut Connection, data: Vec<T>, table_name: &str, 
 /// ```
 pub trait SQLReadable: Sized {
     /// Define how to construct a struct from a row.
-    fn from_row(row: &Row) -> Result<Self,Error>;
+    fn from_row(row: &Row) -> Result<Self,Error>    where
+    Self: Sized;
 }
 
 
@@ -123,16 +124,10 @@ where
    
     let mut stmt  = conn.prepare(&command)?;
 
-    let mut result: Vec<T> = Vec::new();
     
-    stmt
-    .query_map([], |row|
-        T::from_row(row))
-        .and_then(|mapped_rows| {
-            mapped_rows.collect::<Result<Vec<T>, _>>() // Collect rows into Vec<T>
-        }); //WHYYYYYY
- 
-    Ok(result)
+    let x = stmt.query_and_then([], |row| T::from_row(row))?
+    .collect();
+    x
 }
 
 ///  Deletes an entry from the specified table based on the given condition.
@@ -179,7 +174,11 @@ pub fn ensure_table_format(
     conn: &Connection,
     table_name: &str,
     required_columns: Vec<(&str, &str, bool)>,
-) -> Result<()> {
+) -> Result<(),Error> {
+
+    //TODO nuleble
+    //Wat als de name wel bestaat maar de data type niet klopt
+
     // Step 1: Check if the table exists and get its current format
     let pragma_query = format!("PRAGMA table_info({});", table_name);
     let mut stmt = conn.prepare(&pragma_query)?;
@@ -191,8 +190,7 @@ pub fn ensure_table_format(
                 row.get::<_, i32>(5)? != 0, // Is primary key (pk column != 0)
             ))
         })?
-        .filter_map(Result::ok)
-        .collect();
+        .collect::<Result<Vec<_>,_>>()?;
 
     if existing_columns.is_empty() {
         // Table doesn't exist, create it with required columns
