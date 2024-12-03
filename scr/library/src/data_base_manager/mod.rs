@@ -1,5 +1,5 @@
 use std::str;
-use rusqlite::{Error::{self, InvalidQuery}, Connection, Row, ToSql };
+use rusqlite::{Error, Connection, Row, ToSql };
 
 
 /// a simpel fucntion to write to a SQLite database.
@@ -53,7 +53,7 @@ pub fn write_database<T>(conn: &mut Connection, data: Vec<T>, table_name: &str, 
 /// 
 /// # Example
 /// ```
-///     use rusqlite::Row;
+///     use rusqlite::{Error,Row};
 ///     use library::data_base_manager::SQLReadable;
 /// 
 ///     struct User {
@@ -64,9 +64,9 @@ pub fn write_database<T>(conn: &mut Connection, data: Vec<T>, table_name: &str, 
 ///         let id = row.get(0)?;
 ///         let name = row.get(1)?;
 ///         let age = row.get(2)?;
-///         User {
+///         Ok(User {
 ///             id, name, age
-///         }
+///         })
 ///     }
 /// }
 /// ```
@@ -130,7 +130,7 @@ where
 }
 
 ///  Deletes an entry from the specified table based on the given condition.
-///  doesn't do enithing if condition is emptie
+///  give a error if condition is emptie
 /// 
 /// # Arguments
 ///
@@ -146,7 +146,7 @@ where
 /// ```
 pub fn delete_entry(conn: &Connection, table_name: &str, condition: &str)-> Result<usize,Error>{
     if condition.trim().is_empty(){
-        return Err(InvalidQuery);
+        return Err(Error::InvalidColumnName("Can't delete entire database at once".to_string())); // discriptor
     }
     let command = format!("DELETE FROM {} WHERE {}", table_name, condition);
     conn.execute(&command, [])
@@ -170,14 +170,10 @@ pub fn delete_entry(conn: &Connection, table_name: &str, condition: &str)-> Resu
 /// ]);
 /// ```
 pub fn ensure_table_format(
-    conn: &Connection,
+    conn: &mut Connection,
     table_name: &str,
     required_columns: Vec<(&str, &str, bool, bool)>,
 ) -> Result<(),Error> {
-
-    //TODO nuleble
-    //Wat als de name wel bestaat maar de data type niet klopt
-
     // Step 1: Check if the table exists and get its current format
     let pragma_query = format!("PRAGMA table_info({});", table_name);
     let mut stmt = conn.prepare(&pragma_query)?;
@@ -191,16 +187,31 @@ pub fn ensure_table_format(
             ))
         })?
         .collect::<Result<Vec<_>,_>>()?;
-
+    drop(stmt);
     if existing_columns.is_empty() {
-        create_table(conn, required_columns, table_name);
+        create_table(conn, &required_columns, table_name)?;
     } else {
-        alter_table();
+        alter_table(conn, &required_columns, &existing_columns,table_name)?;
     }
     Ok(())
 }
+/*struct ColumnDefinition<'a> {
+//    name: &'a str,
+//    col_type: &'a str,
+//    not_null: bool,
+//    is_primary_key: bool,
+//}
+// for cleaner metanebiletie and readebiletie
+While your code generally avoids SQL injection risks by using placeholders (?), dynamic SQL generation in delete_entry, create_table, and alter_table could potentially be exploited if table_name or condition comes from untrusted input. Use parameterized queries for additional safety:
 
-fn create_table(conn: &Connection, required_columns: Vec<(&str, &str, bool, bool)>, table_name: &str)-> Result<(), Error>{
+custom error types
+
+duplecation (macors)
+
+doc test linker error
+*/
+
+fn create_table(conn: &Connection, required_columns: &[(&str, &str, bool, bool)], table_name: &str)-> Result<(), Error>{
         let columns_def = required_columns
         .iter()
         .map(|(name, col_type, not_nulleble,is_pk)| {
@@ -221,33 +232,59 @@ fn create_table(conn: &Connection, required_columns: Vec<(&str, &str, bool, bool
     Ok(())
 }
 
-fn alter_table(required_columns: &[(&str, &str, bool, bool)], existing_columns: &[(String, String,bool ,bool)] )-> Result<(), Error> {
-        for (name, col_type,not_nulleble ,is_pk) in required_columns {
-            match existing_columns.iter().find(|(col_name, _,_,_)| col_name == name) {
-                Some((_, existing_type, existing_not_null, existing_is_pk)) => {
-                    
-                },
-                None => todo!(),
-            }
-                     //col_type == col_type_existing && not_nulleble == not_nulleble_existing && is_pk == is_pk_existing
-                }}) {
-                 //make collem aan
-                if is_pk {
-                    return Err(); // error kan geen primary key aan maken
-                } else {
-                    let alter_table_query = String::new();
-                        
-                    if not_nulleble{
-                        alter_table_query = format!("ALTER TABLE {} ADD COLUMN {} {} NOT NULL;", table_name, name, col_type)
-                    }else {
-                        alter_table_query = format!("ALTER TABLE {} ADD COLUMN {} {};", table_name, name, col_type);
-                    }
-                        conn.execute(&alter_table_query, [])?;
+fn alter_table(conn: &mut Connection, required_columns: &[(&str, &str, bool, bool)], existing_columns: &[(String, String,bool ,bool)], table_name: &str )-> Result<(), Error> {
+    let mut querys: Vec<String> = Vec::new();
+    let mut errors: Vec<String> = vec!["Errors while updating table fomat:\n".to_string()];
+    let mut main_error_flag = false;
+    for (name, col_type,not_nulleble ,is_pk) in required_columns {
+        match existing_columns.iter().find(|(col_name, _,_,_)| col_name == name) {
+            Some((_, existing_type, existing_not_null, existing_is_pk)) => {
+                let mut error_flag= false;
+                let mut error_mesige = String::new();
+                if existing_type != col_type{
+                    error_flag =true;
+                    error_mesige.push_str(&format!("- Type mismatch: expected '{}', found '{}'.\n", col_type, existing_type));
                 }
-            }
+                if existing_not_null != not_nulleble{
+                    error_flag =true;
+                    error_mesige.push_str(&format!("- NOT NULL mismatch: expected '{}', found '{}'.\n", not_nulleble, existing_not_null));
+                }
+                if existing_is_pk != is_pk{
+                    error_flag =true;
+                    error_mesige.push_str(&format!("- PRIMARY KEY mismatch: expected '{}', found '{}'.\n", is_pk, existing_is_pk));
+                }
+                if error_flag {
+                error_mesige.insert_str(0,&format!("Already existing collum: \"{}\" in table: \"{}\" didn't mach given format:\n", name, table_name));
+                errors.push(error_mesige);
+                main_error_flag = true;
+                } 
+            },
+            None => 
+            if *is_pk {
+                main_error_flag = true;
+                errors.push(format!("Tryed to add primary key collem: \"{}\" to existing table \"{}\"\n",name, table_name));
+            } else {
+                    
+                if *not_nulleble{
+                    querys.push(format!("ALTER TABLE {} ADD COLUMN {} {} NOT NULL;", table_name, name, col_type));
+                }else {
+                    querys.push( format!("ALTER TABLE {} ADD COLUMN {} {};", table_name, name, col_type));
+                }
+            },               
         }
-        Ok(())
+    }
+    if main_error_flag{
+        return Err(Error::InvalidColumnName(errors.join("")));
+    }
+    let transac = conn.transaction()?;
+    for query in querys{
+        transac.execute(&query, [])?;
+    }
+    transac.commit()?;
+    Ok(())
 }
+
+
 
 
 /// #Example
