@@ -193,37 +193,14 @@ pub fn ensure_table_format(
         .collect::<Result<Vec<_>,_>>()?;
 
     if existing_columns.is_empty() {
-        create_table(&conn, required_columns, table_name);
+        create_table(conn, required_columns, table_name);
     } else {
-        // Step 2: Add missing columns if the table exists
-        for (name, col_type,not_nulleble ,is_pk) in required_columns {
-            if existing_columns.iter().any(|(col_name, _,_,_)| {
-                col_name == name}) {
-                // check of collum type correct is
-            }else{
-                //make collem aan
-                if is_pk {
-                    println!(
-                        "Cannot add primary key column '{}' to existing table '{}'.",
-                        name, table_name
-                    );
-                } else {
-                    let alter_table_query =
-                        format!("ALTER TABLE {} ADD COLUMN {} {};", table_name, name, col_type);
-                    conn.execute(&alter_table_query, [])?;
-                    println!(
-                        "Added column '{}' of type '{}' to table '{}'.",
-                        name, col_type, table_name
-                    );
-                }
-            }
-        }
+        alter_table();
     }
-
     Ok(())
 }
 
-fn create_table(conn: &Connection, required_columns: Vec<(&str, &str, bool, bool)>, table_name: &str){
+fn create_table(conn: &Connection, required_columns: Vec<(&str, &str, bool, bool)>, table_name: &str)-> Result<(), Error>{
         let columns_def = required_columns
         .iter()
         .map(|(name, col_type, not_nulleble,is_pk)| {
@@ -241,7 +218,37 @@ fn create_table(conn: &Connection, required_columns: Vec<(&str, &str, bool, bool
         let create_table_query = format!("CREATE TABLE {} ({});", table_name, columns_def);
         conn.execute(&create_table_query, [])?;
         println!("Table '{}' created.", table_name);
+    Ok(())
 }
+
+fn alter_table(required_columns: &[(&str, &str, bool, bool)], existing_columns: &[(String, String,bool ,bool)] )-> Result<(), Error> {
+        for (name, col_type,not_nulleble ,is_pk) in required_columns {
+            match existing_columns.iter().find(|(col_name, _,_,_)| col_name == name) {
+                Some((_, existing_type, existing_not_null, existing_is_pk)) => {
+                    
+                },
+                None => todo!(),
+            }
+                     //col_type == col_type_existing && not_nulleble == not_nulleble_existing && is_pk == is_pk_existing
+                }}) {
+                 //make collem aan
+                if is_pk {
+                    return Err(); // error kan geen primary key aan maken
+                } else {
+                    let alter_table_query = String::new();
+                        
+                    if not_nulleble{
+                        alter_table_query = format!("ALTER TABLE {} ADD COLUMN {} {} NOT NULL;", table_name, name, col_type)
+                    }else {
+                        alter_table_query = format!("ALTER TABLE {} ADD COLUMN {} {};", table_name, name, col_type);
+                    }
+                        conn.execute(&alter_table_query, [])?;
+                }
+            }
+        }
+        Ok(())
+}
+
 
 /// #Example
 /// ```
