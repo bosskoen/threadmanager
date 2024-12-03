@@ -1,5 +1,5 @@
 use std::str;
-use rusqlite::{Error, Connection, Row, ToSql };
+use rusqlite::{Error::{self, InvalidQuery}, Connection, Row, ToSql };
 
 
 /// a simpel fucntion to write to a SQLite database.
@@ -72,8 +72,7 @@ pub fn write_database<T>(conn: &mut Connection, data: Vec<T>, table_name: &str, 
 /// ```
 pub trait SQLReadable: Sized {
     /// Define how to construct a struct from a row.
-    fn from_row(row: &Row) -> Result<Self,Error>    where
-    Self: Sized;
+    fn from_row(row: &Row) -> Result<Self,Error>;
 }
 
 
@@ -145,12 +144,12 @@ where
 ///     let conn = Connection::open("my_database.db").unwrap();
 ///     delete_entry(&conn, "users", "id = 1").unwrap();
 /// ```
-pub fn delete_entry(conn: &Connection, table_name: &str, condition: &str){
+pub fn delete_entry(conn: &Connection, table_name: &str, condition: &str)-> Result<usize,Error>{
     if condition.trim().is_empty(){
-        panic!("Condition cannot be empty to prevent accidental deletion of all rows."); //TODO error delete alles?
+        return Err(InvalidQuery);
     }
     let command = format!("DELETE FROM {} WHERE {}", table_name, condition);
-    conn.execute(&command, []);
+    conn.execute(&command, [])
 }
 
 /// Ensures a SQLite table meets the required format, creating or altering it as necessary.
@@ -158,22 +157,22 @@ pub fn delete_entry(conn: &Connection, table_name: &str, condition: &str){
 /// # Arguments
 /// - `conn`: SQLite database connection.
 /// - `table_name`: Name of the table to check or create.
-/// - `required_columns`: A vector of tuples (column name, column type, is_primary_key).
+/// - `required_columns`: A vector of tuples (column name, column type, not_null ,is_primary_key).
 ///
 /// # Example
 /// ``` no_run
 ///     use rusqlite::Connection;
 ///     let conn = Connection::open("test.db").unwrap();
 ///     ensure_table_format(&conn, "users", vec![
-///     ("id", "INTEGER", true), // Primary key
-///     ("name", "TEXT", false),
-///     ("email", "TEXT", false)
+///     ("id", "INTEGER", true ,true), // Primary key
+///     ("name", "TEXT",false ,false),
+///     ("email", "TEXT",true ,false)
 /// ]);
 /// ```
 pub fn ensure_table_format(
     conn: &Connection,
     table_name: &str,
-    required_columns: Vec<(&str, &str, bool)>,
+    required_columns: Vec<(&str, &str, bool, bool)>,
 ) -> Result<(),Error> {
 
     //TODO nuleble
@@ -182,38 +181,27 @@ pub fn ensure_table_format(
     // Step 1: Check if the table exists and get its current format
     let pragma_query = format!("PRAGMA table_info({});", table_name);
     let mut stmt = conn.prepare(&pragma_query)?;
-    let existing_columns: Vec<(String, String, bool)> = stmt
+    let existing_columns: Vec<(String, String,bool ,bool)> = stmt
         .query_map([], |row| {
             Ok((
                 row.get::<_, String>(1)?, // Column name
                 row.get::<_, String>(2)?, // Column type
+                row.get::<_, bool>(3)?, // is not null
                 row.get::<_, i32>(5)? != 0, // Is primary key (pk column != 0)
             ))
         })?
         .collect::<Result<Vec<_>,_>>()?;
 
     if existing_columns.is_empty() {
-        // Table doesn't exist, create it with required columns
-        let columns_def = required_columns
-            .iter()
-            .map(|(name, col_type, is_pk)| {
-                if *is_pk {
-                    format!("{} {} PRIMARY KEY", name, col_type)
-                } else {
-                    format!("{} {}", name, col_type)
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
-        let create_table_query = format!("CREATE TABLE {} ({});", table_name, columns_def);
-        conn.execute(&create_table_query, [])?;
-        println!("Table '{}' created.", table_name);
+        create_table(&conn, required_columns, table_name);
     } else {
         // Step 2: Add missing columns if the table exists
-        for (name, col_type, is_pk) in required_columns {
-            if !existing_columns.iter().any(|(col_name, col_type_existing, is_pk_existing)| {
-                col_name == name && col_type_existing == col_type && is_pk == *is_pk_existing
-            }) {
+        for (name, col_type,not_nulleble ,is_pk) in required_columns {
+            if existing_columns.iter().any(|(col_name, _,_,_)| {
+                col_name == name}) {
+                // check of collum type correct is
+            }else{
+                //make collem aan
                 if is_pk {
                     println!(
                         "Cannot add primary key column '{}' to existing table '{}'.",
@@ -233,6 +221,26 @@ pub fn ensure_table_format(
     }
 
     Ok(())
+}
+
+fn create_table(conn: &Connection, required_columns: Vec<(&str, &str, bool, bool)>, table_name: &str){
+        let columns_def = required_columns
+        .iter()
+        .map(|(name, col_type, not_nulleble,is_pk)| {
+        let mut query = format!("{} {}", name, col_type);
+        if *not_nulleble{
+            query.push_str(" NOT NULL");
+            }
+        if *is_pk {
+            query.push_str( " PRIMARY KEY");
+            }
+        query
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+        let create_table_query = format!("CREATE TABLE {} ({});", table_name, columns_def);
+        conn.execute(&create_table_query, [])?;
+        println!("Table '{}' created.", table_name);
 }
 
 /// #Example
