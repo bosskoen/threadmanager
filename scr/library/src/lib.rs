@@ -27,6 +27,20 @@ pub fn format_duration(start: DateTime<Local>, end: DateTime<Local>) -> String {
     )
 }
 
+#[macro_export]
+macro_rules! impl_status {
+    ($struct_name:ident, $format_body:expr) => {
+        impl Status for $struct_name {
+            fn format(&self) -> String {
+                $format_body
+            }
+
+            fn as_any_mut(&mut self) -> &mut dyn Any {
+                self
+            }
+        }
+    };
+}
 
 #[cfg(test)]
 mod tests {

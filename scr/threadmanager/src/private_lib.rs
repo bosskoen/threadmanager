@@ -1,13 +1,8 @@
-use library::{error_handeler::{error_catchloop,ErrorOperation}, Status};
-use std::{collections::HashMap, process::exit, sync::{atomic::AtomicBool, mpsc::{Receiver, Sender}, Arc, Mutex}, thread::{self, JoinHandle}};
+use library::{error_handeler::{error_catchloop,ErrorOperation}, impl_status, Status};
+use std::{any::Any, collections::HashMap, process::exit, sync::{atomic::AtomicBool, mpsc::{Receiver, Sender}, Arc, Mutex}, thread::{self, JoinHandle}};
 
 pub struct IniStatus{}
-impl Status for IniStatus {
-    fn format(&self) -> String {
-        String::from("initialisation status")
-    }
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {self}
-}
+impl_status!(IniStatus,String::from("initialisation status"));
 
 pub struct Manager{
     map: HashMap<String, ThreadHandel>,
