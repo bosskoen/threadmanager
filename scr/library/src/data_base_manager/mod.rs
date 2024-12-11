@@ -19,20 +19,24 @@ mod helper_functions;
 /// 
 /// # Example
 /// ``` no_run
-///     struct test{
-///     id:u64, value1:Sting, value2: bool
+///     use library::data_base_manager::*;
+///     use rusqlite::ToSql;
+///     use rusqlite::Connection;
+/// 
+///     struct Test{
+///     id:u64, value1:String, value2: bool
 ///     }
-///     impl SQLformat for test{ 
+///     impl SQLformat for Test{ 
 ///      fn sqlformat(&self) -> Vec<&dyn ToSql>{
 ///         vec![&self.value2, &self.id, &self.value1]
 ///         }
 ///     }
-///     let data = vec![test{id:1,value1: "hello".to_string(), value2: true},
-///                     test{id:2,value1: "world".to_string(), value2: false},
-///                     test{id:5,value1: "cake".to_string(), value2: true}]
+///     let data = vec![Test{id:1,value1: "hello".to_string(), value2: true},
+///                     Test{id:2,value1: "world".to_string(), value2: false},
+///                     Test{id:5,value1: "cake".to_string(), value2: true}];
 ///     let mut conn = Connection::open("test.db").unwrap();
 /// 
-///     write_database(conn, data ,"test", "value2, id, value1");
+///     write_database(&mut conn, data ,"test", "value2, id, value1");
 /// ```
 /// 
 pub fn write_database<T>(conn: &mut Connection, data: Vec<T>, table_name: &str, table_format: &str) -> Result<(),Error>
@@ -65,7 +69,8 @@ pub fn write_database<T>(conn: &mut Connection, data: Vec<T>, table_name: &str, 
 ///
 /// # Example
 /// ``` no_run
-///     use rusqlite::Connection;
+///     use library::data_base_manager::*;
+///     use rusqlite::{Connection, Row};
 ///     struct User {
 ///     id: i32, name: String, age: i32,
 ///     }
@@ -75,15 +80,15 @@ pub fn write_database<T>(conn: &mut Connection, data: Vec<T>, table_name: &str, 
 ///         let id = row.get(0)?;
 ///         let name = row.get(1)?;
 ///         let age = row.get(2)?;
-///         User {
+///         Ok(User {
 ///             id, name, age
-///         }
+///         })
 ///     }
 /// }
 /// 
 ///     let mut conn = Connection::open("my_database.db").unwrap();
 /// 
-///     let users: Vec<User> = read_database(conn, "users", "id, name, age", "WHERE age > 18");
+///     let users: Vec<User> = read_database(&conn, "users", "id, name, age", "WHERE age > 18").unwrap();
 /// ```
 pub fn read_database<T>(conn: &Connection, table_name: &str, query_column_names: &str, condition: &str) -> Result<Vec<T>,Error>
 where
@@ -112,6 +117,7 @@ where
 /// 
 /// # Example
 /// ``` no_run
+///     use library::data_base_manager::*;
 ///     use rusqlite::Connection;
 ///     let conn = Connection::open("my_database.db").unwrap();
 ///     delete_entry(&conn, "users", "id = 1").unwrap();
@@ -133,9 +139,10 @@ pub fn delete_entry(conn: &Connection, table_name: &str, condition: &str)-> Resu
 ///
 /// # Example
 /// ``` no_run
+///     use library::{*,data_base_manager::*} ;
 ///     use rusqlite::Connection;
-///     let conn = Connection::open("test.db").unwrap();
-///     ensure_table_format(&conn, "users", vec![
+///     let mut conn = Connection::open("test.db").unwrap();
+///     ensure_table_format(&mut conn, "users", vec![
 ///     define_column!("id", "INTEGER", true ,true), // Primary key
 ///     define_column!("name", "TEXT",false ,false),
 ///     define_column!("email", "TEXT",true ,false)
@@ -146,10 +153,12 @@ pub fn ensure_table_format(
     table_name: &str,
     required_columns: Vec<ColumnDefinition>,
 ) -> Result<(),Error> {
+    let mut lock_tracaction = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+
     // Step 1: Check if the table exists and get its current format
     let pragma_query = format!("PRAGMA table_info({});", table_name);
 
-    let mut stmt = conn.prepare(&pragma_query)?;
+    let mut stmt = lock_tracaction.prepare(&pragma_query)?;
 
     let pre_existing_columns: Vec<(String, String, bool, bool)> = stmt
     .query_map([], |row| {
@@ -170,10 +179,11 @@ pub fn ensure_table_format(
 
     drop(stmt);
     if existing_columns.is_empty() {
-        create_table(conn, &required_columns, table_name)?;
+        create_table(&lock_tracaction, &required_columns, table_name)?;
     } else {
-        alter_table(conn, &required_columns, &existing_columns,table_name)?;
+        alter_table(&mut lock_tracaction, &required_columns, &existing_columns,table_name)?;
     }
+    lock_tracaction.commit()?;
     Ok(())
 }
 
@@ -386,7 +396,7 @@ mod tests {
         }
 
         let mut value3_found = false;
-        for (name, col_type) in columns_info {
+        for (name, _) in columns_info {
             if name == "value3" {
                 value3_found = true;
             }

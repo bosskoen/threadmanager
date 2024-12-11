@@ -1,4 +1,4 @@
-use rusqlite::Connection;
+use rusqlite::Transaction;
 use super::{ColumnDefinition, Error};
 
 pub fn generate_placeholder(table_format: &str) -> String {
@@ -9,7 +9,7 @@ pub fn generate_placeholder(table_format: &str) -> String {
     .join(", ")
 }
 
-pub fn create_table(conn: &Connection, required_columns: &[ColumnDefinition], table_name: &str)-> Result<(), Error>{
+pub fn create_table(conn: &Transaction, required_columns: &[ColumnDefinition], table_name: &str)-> Result<(), Error>{
     let columns_def = required_columns
     .iter()
     .map(|new_colum| {
@@ -29,7 +29,7 @@ pub fn create_table(conn: &Connection, required_columns: &[ColumnDefinition], ta
 Ok(())
 }
 
-pub fn alter_table(conn: &mut Connection, required_columns: &[ColumnDefinition], existing_columns: &[ColumnDefinition], table_name: &str )-> Result<(), Error> {
+pub fn alter_table(conn: &mut Transaction, required_columns: &[ColumnDefinition], existing_columns: &[ColumnDefinition], table_name: &str )-> Result<(), Error> {
 let mut querys: Vec<String> = Vec::new();
 let mut errors: Vec<String> = vec!["Errors while updating table fomat:\n".to_string()];
 let mut main_error_flag = false;
@@ -58,11 +58,10 @@ for required_colum in required_columns {
 if main_error_flag{
     return Err(Error::AlterTableError(errors.join("")));
 }
-let transac = conn.transaction()?;
+
 for query in querys{
-    transac.execute(&query, [])?;
+    conn.execute(&query, [])?;
 }
-transac.commit()?;
 Ok(())
 }
 
@@ -97,7 +96,8 @@ mod tests {
 
     #[test]
     fn test_alter_table() -> Result<()> {
-        let mut conn = Connection::open_in_memory()?;
+        let mut x = Connection::open_in_memory()?;
+        let mut conn = x.transaction()?;
 
         // Step 1: Create an initial table
         conn.execute(
@@ -145,7 +145,8 @@ mod tests {
 
     #[test]
     fn test_alter_table_with_errors() -> Result<()> {
-        let mut conn = Connection::open_in_memory()?;
+        let mut x = Connection::open_in_memory()?;
+        let mut conn = x.transaction()?;
 
         // Step 1: Create an initial table
         conn.execute(
