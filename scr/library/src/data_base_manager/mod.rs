@@ -1,5 +1,5 @@
 use std::str;
-use rusqlite::Connection;
+pub use rusqlite::Connection;
 
 use self::helper_functions::*;
 

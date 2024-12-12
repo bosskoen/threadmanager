@@ -1,5 +1,6 @@
 pub mod error_handeler;
 pub mod data_base_manager;
+pub mod web_service_adapter;
 
 use std::any::Any;
 
