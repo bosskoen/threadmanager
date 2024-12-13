@@ -13,7 +13,7 @@ macro_rules! define_column {
 macro_rules! impl_sql_readable {
     ($struct_name:ident { $( $field:ident : $type:ty ),* }) => {
         impl SQLReadable for $struct_name {
-            fn from_row(row: &Row) -> Result<Self, Error> {
+            fn from_row(row: &Row) -> Result<Self, DataBaseError> {
                 Ok($struct_name {
                     $(
                         $field: row.get(stringify!($field))?,
@@ -45,13 +45,13 @@ macro_rules! impl_sql_format {
 /// # Example
 /// ```
 ///     use rusqlite::Row;
-///     use library::data_base_manager::{SQLReadable,Error};
+///     use library::data_base_manager::{SQLReadable,DataBaseError};
 /// 
 ///     struct User {
 ///     id: i32, name: String, age: i32,
 /// }
 /// impl SQLReadable for User {
-///     fn from_row(row: &Row) -> Result<Self,Error> {
+///     fn from_row(row: &Row) -> Result<Self,DataBaseError> {
 ///         let id = row.get(0)?;
 ///         let name = row.get(1)?;
 ///         let age = row.get(2)?;
@@ -63,7 +63,7 @@ macro_rules! impl_sql_format {
 /// ```
 pub trait SQLReadable: Sized {
     /// Define how to construct a struct from a row.
-    fn from_row(row: &Row) -> Result<Self,Error>;
+    fn from_row(row: &Row) -> Result<Self,DataBaseError>;
 }
 
 /// #Example
@@ -112,28 +112,28 @@ impl<'a> ColumnDefinition<'a>{
 }
 
 #[derive(Debug)]
-pub enum Error {
+pub enum DataBaseError {
     Sqlite(SqliteError), // SQLite error will be directly part of our custom error
     NoConditionFound(String),        // Other types of custom errors
     AlterTableError(String)
 }
 
 // Implement `fmt::Display` to print errors
-impl fmt::Display for Error {
+impl fmt::Display for DataBaseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Error::Sqlite(err) => write!(f, "SQLite Error: {}", err),
-            Error::NoConditionFound(msg) => write!(f, "No Condition Found: {}", msg),
-            Error::AlterTableError(msg) => write!(f, "Tryed altering a tabe but got this error:\n{}", msg),
+            DataBaseError::Sqlite(err) => write!(f, "SQLite Error: {}", err),
+            DataBaseError::NoConditionFound(msg) => write!(f, "No Condition Found: {}", msg),
+            DataBaseError::AlterTableError(msg) => write!(f, "Tryed altering a tabe but got this error:\n{}", msg),
         }
     }
 }
 
 // Optionally implement `std::error::Error`
-impl std::error::Error for Error {}
+impl std::error::Error for DataBaseError {}
 
-impl From<SqliteError> for Error {
-    fn from(err: SqliteError) -> Error {
-        Error::Sqlite(err)  // Directly convert to MyError without nesting
+impl From<SqliteError> for DataBaseError {
+    fn from(err: SqliteError) -> DataBaseError {
+        DataBaseError::Sqlite(err)  // Directly convert to MyError without nesting
     }
 }

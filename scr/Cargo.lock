@@ -659,6 +659,7 @@ dependencies = [
  "reqwest",
  "retry",
  "rusqlite",
+ "url",
 ]
 
 [[package]]

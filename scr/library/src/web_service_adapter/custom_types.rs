@@ -1,23 +1,48 @@
 use std::fmt;
+use url::ParseError;
+use reqwest::Error as ReqwestError;
+use retry::Error as RetryError;
 
-
-pub enum Error {
-    
+// Define the WebServiceError enum
+pub enum WebServiceError {
+    UrlParseError(ParseError),
+    HttpClientError(ReqwestError),
+    RetryError(String),
 }
 
-impl fmt::Display for Error {
+impl fmt::Display for WebServiceError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        todo!()
+        match self {
+            WebServiceError::UrlParseError(err) => write!(f, "URL parse error: {}", err),
+            WebServiceError::HttpClientError(err) => write!(f, "HTTP client error: {}", err),
+            WebServiceError::RetryError(err) => write!(f, "Retry error: {}", err),
+        }
     }
 }
 
-impl From<reqwest::Error> for Error{
-    fn from(value: reqwest::Error) -> Self {
-        todo!()
+impl fmt::Debug for WebServiceError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, f)
     }
 }
-impl From<reqwest::Url::ParseError> for Error {
-    fn from(value: reqwest::Url::ParseError) -> Self {
-        todo!()
+
+// Conversion from reqwest::Error to WebServiceError
+impl From<ReqwestError> for WebServiceError {
+    fn from(value: ReqwestError) -> Self {
+        WebServiceError::HttpClientError(value)
+    }
+}
+
+// Conversion from url::ParseError to WebServiceError
+impl From<ParseError> for WebServiceError {
+    fn from(value: ParseError) -> Self {
+        WebServiceError::UrlParseError(value)
+    }
+}
+
+// Conversion from retry::Error to WebServiceError
+impl<E: fmt::Debug> From<RetryError<E>> for WebServiceError {
+    fn from(value: RetryError<E>) -> Self {
+        WebServiceError::RetryError(format!("{:?}", value))
     }
 }

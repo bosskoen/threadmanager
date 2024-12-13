@@ -39,7 +39,7 @@ mod helper_functions;
 ///     write_database(&mut conn, data ,"test", "value2, id, value1");
 /// ```
 /// 
-pub fn write_database<T>(conn: &mut Connection, data: Vec<T>, table_name: &str, table_format: &str) -> Result<(),Error>
+pub fn write_database<T>(conn: &mut Connection, data: Vec<T>, table_name: &str, table_format: &str) -> Result<(),DataBaseError>
     where T: SQLformat
 {
     let placeholders = generate_placeholder(table_format);
@@ -76,7 +76,7 @@ pub fn write_database<T>(conn: &mut Connection, data: Vec<T>, table_name: &str, 
 ///     }
 ///
 /// impl SQLReadable for User {
-///     fn from_row(row: &Row) -> Result<Self,Error> {
+///     fn from_row(row: &Row) -> Result<Self,DataBaseError> {
 ///         let id = row.get(0)?;
 ///         let name = row.get(1)?;
 ///         let age = row.get(2)?;
@@ -90,7 +90,7 @@ pub fn write_database<T>(conn: &mut Connection, data: Vec<T>, table_name: &str, 
 /// 
 ///     let users: Vec<User> = read_database(&conn, "users", "id, name, age", "WHERE age > 18").unwrap();
 /// ```
-pub fn read_database<T>(conn: &Connection, table_name: &str, query_column_names: &str, condition: &str) -> Result<Vec<T>,Error>
+pub fn read_database<T>(conn: &Connection, table_name: &str, query_column_names: &str, condition: &str) -> Result<Vec<T>,DataBaseError>
 where
     T: SQLReadable,
 {
@@ -122,9 +122,9 @@ where
 ///     let conn = Connection::open("my_database.db").unwrap();
 ///     delete_entry(&conn, "users", "id = 1").unwrap();
 /// ```
-pub fn delete_entry(conn: &Connection, table_name: &str, condition: &str)-> Result<usize,Error>{
+pub fn delete_entry(conn: &Connection, table_name: &str, condition: &str)-> Result<usize,DataBaseError>{
     if condition.trim().is_empty(){
-        return Err(Error::NoConditionFound("Can't delete entire database at once".to_string())); // discriptor
+        return Err(DataBaseError::NoConditionFound("Can't delete entire database at once".to_string())); // discriptor
     }
     let command = format!("DELETE FROM {} WHERE {}", table_name,condition);
     Ok(conn.execute(&command, [])?)
@@ -152,7 +152,7 @@ pub fn ensure_table_format(
     conn: &mut Connection,
     table_name: &str,
     required_columns: Vec<ColumnDefinition>,
-) -> Result<(),Error> {
+) -> Result<(),DataBaseError> {
     let mut lock_tracaction = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
 
     // Step 1: Check if the table exists and get its current format
@@ -207,7 +207,7 @@ mod tests {
     }
 
     impl SQLReadable for TestItem {
-        fn from_row(row: &Row) -> Result<Self, Error> {
+        fn from_row(row: &Row) -> Result<Self, DataBaseError> {
             Ok(TestItem {
                 id: row.get(0)?,
                 value1: row.get(1)?,
@@ -217,7 +217,7 @@ mod tests {
     }
 
     #[test]
-    fn test_write_database() -> Result<(), Error> {
+    fn test_write_database() -> Result<(), DataBaseError> {
         let mut conn = Connection::open_in_memory()?;
         conn.execute(
             "CREATE TABLE test (value2 BOOLEAN, id INTEGER PRIMARY KEY, value1 TEXT);",
@@ -256,7 +256,7 @@ mod tests {
     }
 
     #[test]
-    fn test_read_database() -> Result<(),Error> {
+    fn test_read_database() -> Result<(),DataBaseError> {
         let conn = Connection::open_in_memory()?;
         conn.execute(
             "CREATE TABLE test (id INTEGER PRIMARY KEY, value1 TEXT, value2 BOOLEAN);",
@@ -277,7 +277,7 @@ mod tests {
     }
 
     #[test]
-    fn test_delete_entry() -> Result<(),Error> {
+    fn test_delete_entry() -> Result<(),DataBaseError> {
         let conn = Connection::open_in_memory()?;
         conn.execute(
             "CREATE TABLE test (id INTEGER PRIMARY KEY, value1 TEXT, value2 BOOLEAN);",
@@ -306,7 +306,7 @@ mod tests {
     }
 
     #[test]
-    fn test_ensure_table_format() -> Result<(),Error> {
+    fn test_ensure_table_format() -> Result<(),DataBaseError> {
         let mut conn = Connection::open_in_memory()?;
 
         let columns = vec![
@@ -330,7 +330,7 @@ mod tests {
         Ok(())
     }
     #[test]
-    fn test_write_database_empty_input() -> Result<(), Error> {
+    fn test_write_database_empty_input() -> Result<(), DataBaseError> {
         let mut conn = Connection::open_in_memory()?;
         conn.execute("CREATE TABLE test (value2 BOOLEAN, id INTEGER PRIMARY KEY, value1 TEXT);", [])?;
         let data: Vec<TestItem> = vec![];
@@ -343,11 +343,11 @@ mod tests {
     fn test_read_database_invalid_columns() {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, value1 TEXT, value2 BOOLEAN);", []).unwrap();
-        let result: Result<Vec<TestItem>, Error> = read_database(&conn, "test", "nonexistent_column", "");
+        let result: Result<Vec<TestItem>, DataBaseError> = read_database(&conn, "test", "nonexistent_column", "");
         assert!(result.is_err());
     }
     #[test]
-    fn test_concurrent_ensure_table_format() -> Result<(),Error> {
+    fn test_concurrent_ensure_table_format() -> Result<(),DataBaseError> {
         use std::thread;
         use std::path::Path;
         use std::fs;
@@ -410,7 +410,7 @@ mod tests {
         Ok(())
     }
     #[test]
-    fn test_write_database_duplicate_primary_key() -> Result<(), Error> {
+    fn test_write_database_duplicate_primary_key() -> Result<(), DataBaseError> {
         let mut conn = Connection::open_in_memory()?;
         conn.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, value1 TEXT, value2 BOOLEAN);", [])?;
         let data = vec![

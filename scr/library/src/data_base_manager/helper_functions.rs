@@ -1,5 +1,5 @@
 use rusqlite::Transaction;
-use super::{ColumnDefinition, Error};
+use super::{ColumnDefinition, DataBaseError};
 
 pub fn generate_placeholder(table_format: &str) -> String {
     table_format
@@ -9,7 +9,7 @@ pub fn generate_placeholder(table_format: &str) -> String {
     .join(", ")
 }
 
-pub fn create_table(conn: &Transaction, required_columns: &[ColumnDefinition], table_name: &str)-> Result<(), Error>{
+pub fn create_table(conn: &Transaction, required_columns: &[ColumnDefinition], table_name: &str)-> Result<(), DataBaseError>{
     let columns_def = required_columns
     .iter()
     .map(|new_colum| {
@@ -29,7 +29,7 @@ pub fn create_table(conn: &Transaction, required_columns: &[ColumnDefinition], t
 Ok(())
 }
 
-pub fn alter_table(conn: &mut Transaction, required_columns: &[ColumnDefinition], existing_columns: &[ColumnDefinition], table_name: &str )-> Result<(), Error> {
+pub fn alter_table(conn: &mut Transaction, required_columns: &[ColumnDefinition], existing_columns: &[ColumnDefinition], table_name: &str )-> Result<(), DataBaseError> {
 let mut querys: Vec<String> = Vec::new();
 let mut errors: Vec<String> = vec!["Errors while updating table fomat:\n".to_string()];
 let mut main_error_flag = false;
@@ -56,7 +56,7 @@ for required_colum in required_columns {
     }
 }
 if main_error_flag{
-    return Err(Error::AlterTableError(errors.join("")));
+    return Err(DataBaseError::AlterTableError(errors.join("")));
 }
 
 for query in querys{
@@ -176,7 +176,7 @@ mod tests {
         assert!(result.is_err());
 
         // Check error message
-        if let Err(Error::AlterTableError(msg)) = result {
+        if let Err(DataBaseError::AlterTableError(msg)) = result {
             assert!(msg.contains("NOT NULL mismatch"));
         } else {
             panic!("Expected AlterTableError");
