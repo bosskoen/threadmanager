@@ -88,7 +88,7 @@ pub fn error_catchloop(resever:Receiver<ErrorOperation>,status: Arc<Mutex<Box<dy
 fn update_status(status: &Arc<Mutex<Box<dyn Status>>>,new_color: ChangeColor){
 
     if let Some(status) = (*status.lock().unwrap_or_else(|_| {
-        eprintln!("couldn't initialize error status");
+        eprintln!("couldn't lock error status");
         exit(101);
     })).as_any_mut().downcast_mut::<ErrorStatus>(){
         status.errors += 1;

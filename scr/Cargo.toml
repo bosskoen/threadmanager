@@ -1,5 +1,5 @@
 [workspace]
-members = [ "library",
+members = [ "getBZprising", "library",
     "threadmanager"
 ]
 resolver = "2"

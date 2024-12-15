@@ -8,6 +8,7 @@ pub enum WebServiceError {
     UrlParseError(ParseError),
     HttpClientError(ReqwestError),
     RetryError(String),
+    StdError(std::io::Error)
 }
 
 impl fmt::Display for WebServiceError {
@@ -16,6 +17,7 @@ impl fmt::Display for WebServiceError {
             WebServiceError::UrlParseError(err) => write!(f, "URL parse error: {}", err),
             WebServiceError::HttpClientError(err) => write!(f, "HTTP client error: {}", err),
             WebServiceError::RetryError(err) => write!(f, "Retry error: {}", err),
+            WebServiceError::StdError(err) => write!(f, "Standard Error: {}", err),
         }
     }
 }
@@ -44,5 +46,11 @@ impl From<ParseError> for WebServiceError {
 impl<E: fmt::Debug> From<RetryError<E>> for WebServiceError {
     fn from(value: RetryError<E>) -> Self {
         WebServiceError::RetryError(format!("{:?}", value))
+    }
+}
+
+impl From<std::io::Error> for WebServiceError {
+    fn from(value: std::io::Error) -> Self {
+        WebServiceError::StdError(value)
     }
 }

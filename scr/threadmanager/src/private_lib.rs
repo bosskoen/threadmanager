@@ -2,7 +2,7 @@ use library::{error_handeler::{error_catchloop,ErrorOperation}, impl_status, Sta
 use std::{any::Any, collections::HashMap, process::exit, sync::{atomic::AtomicBool, mpsc::{Receiver, Sender}, Arc, Mutex}, thread::{self, JoinHandle}};
 
 pub struct IniStatus{}
-impl_status!(IniStatus,String::from("initialisation status"));
+impl_status!(IniStatus, |_| String::from("initialisation status"));
 
 pub struct Manager{
     map: HashMap<String, ThreadHandel>,
@@ -44,6 +44,7 @@ impl Manager {
         }
     }
 }
+
 pub struct ThreadHandel{
     pub handel:JoinHandle<()>, //TODO uitvogelen welke return value ik will
     pub stop_flag:AtomicBool,
