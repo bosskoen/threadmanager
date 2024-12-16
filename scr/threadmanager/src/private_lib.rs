@@ -1,5 +1,5 @@
 use library::{error_handeler::{error_catchloop,ErrorOperation}, impl_status, Status};
-use std::{any::Any, collections::HashMap, process::exit, sync::{atomic::AtomicBool, mpsc::{Receiver, Sender}, Arc, Mutex}, thread::{self, JoinHandle}};
+use std::{collections::HashMap, process::exit, sync::{atomic::AtomicBool, mpsc::{Receiver, Sender}, Arc, Mutex}, thread::{self, JoinHandle}};
 
 pub struct IniStatus{}
 impl_status!(IniStatus, |_| String::from("initialisation status"));

@@ -12,8 +12,19 @@ impl RGB {
         Self::new(((hex >> 16) & 255)as u8, ((hex >> 8) & 255) as u8, (hex & 255) as u8)
     }
     pub fn to_hex(&self) -> String{
-        format!("#{:X}{:X}{:X}", self.r, self.g, self.b)
+        format!("#{:02X}{:02X}{:02X}", self.r, self.g, self.b)
     }
+
+    #[allow(non_snake_case)]
+    pub fn RED()->Self{Self::new(255,0,0)}
+    #[allow(non_snake_case)]
+    pub fn GREEN() -> Self { Self::new(0, 255, 0) }
+    #[allow(non_snake_case)]
+    pub fn BLUE() -> Self { Self::new(0, 0, 255) }
+    #[allow(non_snake_case)]
+    pub fn WHITE() -> Self { Self::new(255, 255, 255) }
+    #[allow(non_snake_case)]
+    pub fn BLACK() -> Self { Self::new(0, 0, 0) }
 }
 
 #[cfg(test)]
