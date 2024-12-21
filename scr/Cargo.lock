@@ -281,7 +281,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "getBZprising"
+name = "get_bz_pricing"
 version = "0.1.0"
 dependencies = [
  "humansize",
