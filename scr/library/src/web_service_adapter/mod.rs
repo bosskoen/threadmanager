@@ -16,7 +16,7 @@ pub fn get_data(address : &str, retrys: usize, timeout: Duration) -> Result<Stri
         response.text()
     })?;
     Ok(response)
-}
+} //todo let some expexted error code throw maby
 
 /// (text,(sent_bytes, received_bytes))
 pub fn get_data_puls_size(address: &str, retrys: usize, timeout: Duration) -> Result<(String,(usize,usize)), WebServiceError> {

@@ -1,5 +1,5 @@
 [workspace]
-members = [ "get_bz_pricing", "library",
+members = [ "get_BZ_pricing", "library",
     "threadmanager"
 ]
 resolver = "2"

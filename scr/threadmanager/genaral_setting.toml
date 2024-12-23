@@ -1,0 +1,17 @@
+[update]
+server = "ip adders idk"
+path = "path to file idk"
+
+[apps]
+[apps.get_bz_pricing]
+ name = "get_bz_pricing"
+"dll_path" = "path/to/dll"
+"setting_path"= "path/to/settings"
+"help_mesige"= "this is a help mesige"
+        
+[apps.app2]
+"name" = "app2"
+"dll_path" = "path/to/dll2"
+"setting_path"= "path/to/settings2"
+"help_mesige"= "this is a help mesige"
+        

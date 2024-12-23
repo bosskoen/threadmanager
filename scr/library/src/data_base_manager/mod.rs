@@ -185,7 +185,7 @@ pub fn ensure_table_format(
     }
     lock_tracaction.commit()?;
     Ok(())
-}
+}//TODO alleen naar het eerst word kijke in type
 
 
 #[cfg(test)]

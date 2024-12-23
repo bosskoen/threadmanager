@@ -1,32 +1,12 @@
-use std::{fmt::Display, sync::{atomic::{AtomicBool, Ordering}, mpsc::Sender, Arc, Mutex}, thread, time::{Duration, SystemTime}};
+use std::{fmt::Display, fs, sync::{atomic::{AtomicBool, Ordering}, mpsc::Sender, Arc, Mutex}, thread, time::{Duration, SystemTime}};
+use humansize::{format_size, BINARY};
 use library::*;
 use data_base_manager::Connection;
 use error_handeler::ErrorOperation;
-use humansize::{format_size,BINARY};
+use parsing::Settings;
 
-#[derive(Debug)]
-#[allow(non_camel_case_types)]
-enum PricingError {
-    DATA_BASE_CONNECTION_ERROR,
-    STATUS_INTIALISE_ERROR,
-    INCORECT_STATUS_TYPE,
-    LOCK_FAILED_ERROR,
-    ERROR_THREAD_DOWN,
-}
 
-impl Display for PricingError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            PricingError::DATA_BASE_CONNECTION_ERROR => write!(f, "DATA_BASE_CONNECTION_ERROR: Couldn't get a connection to the given data base."),
-            PricingError::STATUS_INTIALISE_ERROR => write!(f, "STATUS_INTIALISE_ERROR: Couldn't get a lock on status while initialising."),
-            PricingError::INCORECT_STATUS_TYPE => write!(f, "INCORECT_STATUS_TYPE: Status wasn't of the corect type."),
-            PricingError::LOCK_FAILED_ERROR => write!(f, "LOCK_FAILED_ERROR: Couldn't get a lock on status while updating."),
-            PricingError::ERROR_THREAD_DOWN => write!(f, "ERROR_THREAD_DOWN: Couldn't send a messige to the error thread."),
-        }
-    }
-}
-
-impl std::error::Error for PricingError{}
+mod parsing;
 
 struct Context {
     stopflag: AtomicBool,
@@ -38,24 +18,43 @@ struct Context {
     update_rate: usize ,
     step_rate: usize,
     time_passed: usize,
+    last_time_setting_written: SystemTime,
+    url: String,
 }
 
 impl Context {
     fn from(stopflag: AtomicBool, status: Arc<Mutex<Box<dyn Status>>>, settings_path: String) -> Result<Self, PricingError>{
-        let data_base_path = String::new(); //TODO all info from JSON setings file
-        let table_name = String::new(); //TODO JSON
-        let update_rate:usize = 0; //TODO JSON
-        let step_rate:usize = 0; //TODO JSON
+        let (settings, last_time_setting_written) = Settings::get(&settings_path)?;
+        let data_base_path = settings.data_base_path;
+        let table_name = settings.table_name;
 
-        let conn = if let Ok( conn) = Connection::open(data_base_path.clone()){
-            conn
-        } else{
-            return Err(PricingError::DATA_BASE_CONNECTION_ERROR);
-        };
+        let conn = Connection::open(data_base_path.clone()).map_err(|_|PricingError::DataBaseConnectionError)?;
+        initialise_status(&conn, &table_name, &status)?;
 
-       initialise_status(&conn, &table_name, &status)?;
+        Ok(Context{stopflag, status ,settings_path, conn, data_base_path, table_name, update_rate: settings.update_rate, step_rate: settings.step_rate, time_passed: 0, last_time_setting_written, url: settings.url})
+    }
 
-        Ok(Context{stopflag, status ,settings_path, conn, data_base_path, table_name, update_rate, step_rate, time_passed: 0})
+    fn update_timing(&mut self) -> Result<(), PricingError>{
+        let mod_time =fs::metadata(&self.settings_path)
+            .map_err(|_|PricingError::FileReadError )?
+            .modified()
+            .map_err(|_| PricingError::FileReadError)?;
+        
+        let duration_since_last_update = mod_time
+            .duration_since(self.last_time_setting_written)
+            .map_err(|_| PricingError::WTFError("You time traveled, the file was modified in the past!".to_string()))?;
+
+        if duration_since_last_update.as_secs() <= 0 {
+            return Ok(());
+        }
+        
+        let (setting, _) = Settings::get(&self.settings_path)?;
+        self.table_name = setting.table_name;
+        self.update_rate = setting.update_rate;
+        self.step_rate = setting.step_rate;
+        self.url = setting.url;
+        self.last_time_setting_written = mod_time;
+        Ok(())
     }
 
     fn update_status(&self, items_tracked: usize, data_used: u64) -> Result<(), PricingError>{
@@ -63,7 +62,7 @@ impl Context {
             Ok(mut stat) => {let internal_statust  = if let Some(mut_status) = (**stat).as_any_mut().downcast_mut::<PricingStatus>(){
                 mut_status
             }else{ 
-                return Err(PricingError::INCORECT_STATUS_TYPE);
+                return Err(PricingError::IncorectStatusType);
             };
             internal_statust.updates_processed += 1;
             internal_statust.items_being_tracked = items_tracked;
@@ -71,13 +70,14 @@ impl Context {
             internal_statust.last_update_time = Local::now();
             },
             Err(_) => { 
-                return Err(PricingError::LOCK_FAILED_ERROR);
+                return Err(PricingError::LockFailedError);
             },
         }
         Ok(())
     }
 
 }
+
 
 #[no_mangle]
 pub fn start(error_handel: Sender<ErrorOperation>, stopflag: AtomicBool, status: Arc<Mutex<Box<dyn Status>>>, settings_path: String) -> Result<(), Box<dyn std::error::Error>>{
@@ -86,7 +86,7 @@ pub fn start(error_handel: Sender<ErrorOperation>, stopflag: AtomicBool, status:
 
     loop {
         let start_of_loop = SystemTime::now();
-        //update update_rate and step_rate
+        context.update_timing();
         if context.stopflag.load(Ordering::Relaxed){
             break;
         }
@@ -101,7 +101,7 @@ pub fn start(error_handel: Sender<ErrorOperation>, stopflag: AtomicBool, status:
             Ok(duration) => duration,
             Err(error) => {
                 if let Err(_) = error_handel.send(ErrorOperation::Print(format!("error while getting elepsted time: {}", error.to_string()))){
-                    return Err(Box::new(PricingError::ERROR_THREAD_DOWN));
+                    return Err(Box::new(PricingError::ErrorThreadDown));
                 }
                 Duration::ZERO
             },
@@ -111,7 +111,7 @@ pub fn start(error_handel: Sender<ErrorOperation>, stopflag: AtomicBool, status:
             thread::sleep(sleep_duration);
         } else {
             if let Err(_) = error_handel.send(ErrorOperation::Print("loop took to long in price logger".to_string())){
-                return Err(Box::new(PricingError::ERROR_THREAD_DOWN));
+                return Err(Box::new(PricingError::ErrorThreadDown));
             }
             context.time_passed += (endloop.saturating_sub(Duration::from_secs(context.step_rate as u64))).as_secs() as usize;
         }
@@ -130,20 +130,50 @@ fn initialise_status(conn: &Connection, table_name: &str,status: &Arc<Mutex<Box<
 
     if let Ok(mut status)= status.lock(){
         (*status) = Box::new(newstatus);
-    }else {return Err(PricingError::STATUS_INTIALISE_ERROR);}
+    }else {return Err(PricingError::StatusIntialiseError);}
     Ok(())
 }
 
-struct PricingStatus{
-    updates_processed: usize,
-    items_being_tracked: usize,
-    network_data_used: u64,
-    last_update_time: DateTime<Local>,
+
+#[derive(Debug)]
+pub enum PricingError {
+    DataBaseConnectionError,
+    StatusIntialiseError,
+    IncorectStatusType,
+    LockFailedError,
+    ErrorThreadDown,
+    FileReadError,
+    TOMLReadError,
+    WTFError(String),
+}
+
+impl Display for PricingError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PricingError::DataBaseConnectionError => write!(f, "DATA_BASE_CONNECTION_ERROR: Couldn't get a connection to the given data base."),
+            PricingError::StatusIntialiseError => write!(f, "STATUS_INTIALISE_ERROR: Couldn't get a lock on status while initialising."),
+            PricingError::IncorectStatusType => write!(f, "INCORECT_STATUS_TYPE: Status wasn't of the corect type."),
+            PricingError::LockFailedError => write!(f, "LOCK_FAILED_ERROR: Couldn't get a lock on status while updating."),
+            PricingError::ErrorThreadDown => write!(f, "ERROR_THREAD_DOWN: Couldn't send a messige to the error thread."),
+            PricingError::TOMLReadError => write!(f, "TOML_READ_ERROR: Error parsing the settings file, i may be malformed or from the wrong appication"),
+            PricingError::FileReadError => write!(f, "FILE_READERROR: Coudn't read the settings file."),
+            PricingError::WTFError(messig) => write!(f, "good job you dit somthing that sould be imposible:\n{}", messig),
+        }
+    }
+}
+
+impl std::error::Error for PricingError{}
+
+pub struct PricingStatus{
+    pub updates_processed: usize,
+    pub items_being_tracked: usize,
+    pub network_data_used: u64,
+    pub last_update_time: DateTime<Local>,
     start_time: DateTime<Local>
 }
 
 impl PricingStatus {
-    fn new() ->Self{
+    pub fn new() ->Self{
         PricingStatus{updates_processed:0,items_being_tracked:0, network_data_used:0, last_update_time: Local::now() , start_time: Local::now()}
     }
 }

@@ -63,19 +63,3 @@ fn printstatus(handle: &ThreadHandel){
     }
 }
 
-/*use std::panic;
-use std::thread;
-
-fn main() {
-    let handle = thread::spawn(|| {
-        panic::catch_unwind(|| {
-            panic!("This will be caught!");
-        })
-        .unwrap_or_else(|err| {
-            println!("Caught a panic in thread: {:?}", err);
-        });
-    });
-
-    handle.join().unwrap();
-    println!("Main thread continues execution.");
-} */

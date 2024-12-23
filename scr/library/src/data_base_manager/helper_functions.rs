@@ -10,6 +10,7 @@ pub fn generate_placeholder(table_format: &str) -> String {
 }
 
 pub fn create_table(conn: &Transaction, required_columns: &[ColumnDefinition], table_name: &str)-> Result<(), DataBaseError>{
+    let mut primary_key = String::new();
     let columns_def = required_columns
     .iter()
     .map(|new_colum| {
@@ -18,13 +19,22 @@ pub fn create_table(conn: &Transaction, required_columns: &[ColumnDefinition], t
         query.push_str(" NOT NULL");
         }
     if new_colum.is_primary_key(){
-        query.push_str( " PRIMARY KEY");
+        if primary_key.len() == 0{
+            primary_key.push_str(",\nPRIMARY KEY (");
+            primary_key.push_str(new_colum.name());
+        }else{
+            primary_key.push(',');
+            primary_key.push_str(new_colum.name());
+        }
         }
     query
     })
     .collect::<Vec<_>>()
     .join(", ");
-    let create_table_query = format!("CREATE TABLE {} ({});", table_name, columns_def);
+    if primary_key.len() != 0{
+        primary_key.push(')');
+    }
+    let create_table_query = format!("CREATE TABLE {} ({}{});", table_name, columns_def, primary_key);
     conn.execute(&create_table_query, [])?;
 Ok(())
 }

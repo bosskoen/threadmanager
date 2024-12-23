@@ -1,0 +1,20 @@
+{
+    "update":{
+        "server": "ip adders idk",
+        "path": "paht/to/idk"
+    },
+    "apps":{
+        "get_bz_pricing":{
+            "name" : "get_bz_pricing",
+            "dll_path" : "path/to/dll",
+            "setting_path": "path/to/settings",
+            "help_mesige": "this is a help mesige"
+        },
+        "app2":{
+            "name" : "app2",
+            "dll_path" : "path/to/dll2",
+            "setting_path": "path/to/settings2",
+            "help_mesige": "this is a help mesige"
+        }
+    }
+}

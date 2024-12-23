@@ -1,0 +1,7 @@
+{
+    "name" : "hello",
+    "step_rate" : 30,
+    "update_rate" : 120,
+    "table_name" : "test",
+    "data_base_path" : "paht/to/data/base"
+}
