@@ -1,5 +1,5 @@
 #name for valedation
-name = "hello"
+name = "get_bz_pricing"
 
 # setting
 data_base_path = "paht/to/data/base"

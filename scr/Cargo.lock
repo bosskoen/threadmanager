@@ -1262,6 +1262,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "template_plugin"
+version = "0.1.0"
+dependencies = [
+ "library",
+ "serde",
+ "toml",
+]
+
+[[package]]
 name = "threadmanager"
 version = "0.1.0"
 dependencies = [

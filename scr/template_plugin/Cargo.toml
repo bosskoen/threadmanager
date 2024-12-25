@@ -1,0 +1,12 @@
+[package]
+name = "template_plugin"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["dylib"]
+
+[dependencies]
+library = {path = "../library"}
+serde = {version = "1.0.216", features = ["derive"]}
+toml = "0.8.19"

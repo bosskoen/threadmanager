@@ -1,13 +1,13 @@
-use std::{fmt:: Display, fs, sync::{atomic::{AtomicBool, Ordering}, mpsc::Sender, Arc, Mutex}, thread, time::{Duration, SystemTime}};
+use std::{fmt::Display, fs, sync::{atomic::{AtomicBool, Ordering}, mpsc::Sender, Arc, Mutex}, thread, time::{Duration, SystemTime}};
 use humansize::{format_size, BINARY};
 use library::*;
 use data_base_manager::{rusqlite::{self, ToSql}, write_database, ColumnDefinition, Connection, DataBaseError, SQLReadable, SQLformat};
 use error_handeler::ErrorOperation;
 use parsing::{BzData, Settings};
 
-
-
 mod parsing;
+
+const APP_NAME: &str = "get_bz_pricing";
 
 struct Context {
     stopflag: AtomicBool,
@@ -94,7 +94,10 @@ pub fn start(error_handel: Sender<ErrorOperation>, stopflag: AtomicBool, status:
         }
         if context.time_passed >= context.update_rate{
             context.time_passed = 0;
-            get_bz_data(&error_handel, &mut context)?;
+            get_bz_data(&error_handel, &mut context).map_err(|err|match err {
+                PricingError::ErrorThreadDown(messige) => Box::new(ErrorThreadDownError::new(APP_NAME, &messige)),
+                _ => Box::new(err) as Box<dyn std::error::Error>
+            })?;
         }else{
             context.time_passed += context.step_rate;
         }
@@ -102,8 +105,8 @@ pub fn start(error_handel: Sender<ErrorOperation>, stopflag: AtomicBool, status:
         let endloop =match start_of_loop.elapsed() {
             Ok(duration) => duration,
             Err(error) => {
-                if let Err(_) = error_handel.send(ErrorOperation::Print(format!("error while getting elepsted time: {}", error.to_string()))){
-                    return Err(Box::new(PricingError::ErrorThreadDown));
+                if let Err(_) = error_handel.send(ErrorOperation::Print(APP_NAME.to_string(),format!("error while getting elepsted time: {error}"))){
+                    return Err(Box::new(ErrorThreadDownError::new(APP_NAME,&format!("error while getting elepsted time: {error}"))));
                 }
                 Duration::ZERO
             },
@@ -112,8 +115,8 @@ pub fn start(error_handel: Sender<ErrorOperation>, stopflag: AtomicBool, status:
         if let Some(sleep_duration) = Duration::from_secs(context.step_rate as u64).checked_sub(endloop) {
             thread::sleep(sleep_duration);
         } else {
-            if let Err(_) = error_handel.send(ErrorOperation::Print("loop took to long in price logger".to_string())){
-                return Err(Box::new(PricingError::ErrorThreadDown));
+            if let Err(_) = error_handel.send(ErrorOperation::Print(APP_NAME.to_string(),"loop took to long in price logger".to_string())){
+                return Err(Box::new(ErrorThreadDownError::new(APP_NAME, "loop took to long in price logger")));
             }
             context.time_passed += (endloop.saturating_sub(Duration::from_secs(context.step_rate as u64))).as_secs() as usize;
         }
@@ -271,8 +274,8 @@ fn initialise_status(conn: &Connection, table_name: &str,status: &Arc<Mutex<Box<
 
 fn get_bz_data(error_handel: &Sender<ErrorOperation>, context: &mut Context) -> Result<(), PricingError>{
     let data= web_service_adapter::get_data_puls_size(&context.url, 3, Duration::from_secs(3)).map_err(|err|{
-        if let Err(_) = error_handel.send(ErrorOperation::Print(format!("error while feching data from api, retrying nex cycel\n{}", err))){
-            return PricingError::ErrorThreadDown;
+        if let Err(_) = error_handel.send(ErrorOperation::Print(APP_NAME.to_string(), format!("error while feching data from api, retrying nex cycel\n{err}"))){
+            return PricingError::ErrorThreadDown(format!("error while feching data from api, retrying nex cycel\n{err}"));
         }
         PricingError::NonFatal}
     );
@@ -284,13 +287,13 @@ fn get_bz_data(error_handel: &Sender<ErrorOperation>, context: &mut Context) -> 
 
     let json_data= BzData::from_data(data).map_err(|err|
     match err {
-        PricingError::JSONReadError => {if let Err(_) = error_handel.send(ErrorOperation::Print("error while parsing the json, retrying nex cycel".to_string())){
-            return PricingError::ErrorThreadDown;
+        PricingError::JSONReadError => {if let Err(_) = error_handel.send(ErrorOperation::Print(APP_NAME.to_string(),"error while parsing the json, retrying nex cycel".to_string())){
+            return PricingError::ErrorThreadDown("error while parsing the json, retrying nex cycel".to_string());
         }
         PricingError::NonFatal
         },
-        PricingError::JSONFormatError(messige) => {if let Err(_) = error_handel.send(ErrorOperation::Print(format!("error while parsing the json, retrying nex cycel\n{}", messige))){
-            return PricingError::ErrorThreadDown;
+        PricingError::JSONFormatError(messige) => {if let Err(_) = error_handel.send(ErrorOperation::Print(APP_NAME.to_string(),format!("error while parsing the json, retrying nex cycel\n{messige}"))){
+            return PricingError::ErrorThreadDown(format!("error while parsing the json, retrying nex cycel\n{messige}"));
         }
         PricingError::NonFatal
         },
@@ -304,8 +307,8 @@ fn get_bz_data(error_handel: &Sender<ErrorOperation>, context: &mut Context) -> 
     let json_data =json_data?;
 
     if !json_data.success{
-        if let Err(_) = error_handel.send(ErrorOperation::Print(format!("JSON had a unexpexted erro,retrying nex cycel", ))){
-            return Err(PricingError::ErrorThreadDown);
+        if let Err(_) = error_handel.send(ErrorOperation::Print(APP_NAME.to_string(),"JSON had a unexpexted erro, retrying nex cycel".to_string())){
+            return Err(PricingError::ErrorThreadDown("JSON had a unexpexted erro, retrying nex cycel".to_string()));
         }
         return Ok(());
     }
@@ -323,8 +326,8 @@ fn get_bz_data(error_handel: &Sender<ErrorOperation>, context: &mut Context) -> 
     .collect();
 
     if data_base_manager::try_write_database(&mut context.conn,hypixel_ids , &context.lookup_table_name, "HypixelID")? > 0{
-        if let Err(_) = error_handel.send(ErrorOperation::Print("new item added to the database, require manual naming.".to_string())){
-            return Err(PricingError::ErrorThreadDown);
+        if let Err(_) = error_handel.send(ErrorOperation::Print(APP_NAME.to_string(),"new item added to the database, require manual naming.".to_string())){
+            return Err(PricingError::ErrorThreadDown("new item added to the database, require manual naming.".to_string()));
         }
     }
     
@@ -353,6 +356,7 @@ fn get_bz_data(error_handel: &Sender<ErrorOperation>, context: &mut Context) -> 
         }
     }
     let time = json_data.last_updated;
+    let mut error_messig: Vec<String> = Vec::new();
     let num_item = json_data.products.len();
     let mut error_send_failed = false;
     let prices_data =json_data.products.into_values()
@@ -369,8 +373,9 @@ fn get_bz_data(error_handel: &Sender<ErrorOperation>, context: &mut Context) -> 
                 buy_price:value.quick_status.buyPrice})
         },
         Err(e) => {
-            if let Err(_) =error_handel.send(ErrorOperation::Print(format!("coudind read :\"{}\"\nError: {}",value.product_id ,e))){
+            if let Err(_) =error_handel.send(ErrorOperation::Print(APP_NAME.to_string(), format!("coudind read :\"{}\"\nError: {}", value.product_id,e))){
                 error_send_failed = true;
+                error_messig.push(format!("coudind read :\"{}\"\nError: {}", value.product_id,e));
             }
             None
         }
@@ -383,7 +388,7 @@ fn get_bz_data(error_handel: &Sender<ErrorOperation>, context: &mut Context) -> 
     context.update_status(num_item, data_in+data_out)?;
     
     if error_send_failed{
-        return Err(PricingError::ErrorThreadDown);
+        return Err(PricingError::ErrorThreadDown(error_messig.join(";\n")));
     }
 
     Ok(())
@@ -397,7 +402,7 @@ pub enum PricingError {
     StatusIntialiseError,
     IncorectStatusType,
     LockFailedError,
-    ErrorThreadDown,
+    ErrorThreadDown(String),
     FileReadError,
     TOMLReadError,
     JSONReadError,
@@ -415,7 +420,7 @@ impl Display for PricingError {
             PricingError::StatusIntialiseError => write!(f, "STATUS_INTIALISE_ERROR: Couldn't get a lock on status while initialising."),
             PricingError::IncorectStatusType => write!(f, "INCORECT_STATUS_TYPE: Status wasn't of the corect type."),
             PricingError::LockFailedError => write!(f, "LOCK_FAILED_ERROR: Couldn't get a lock on status while updating."),
-            PricingError::ErrorThreadDown => write!(f, "ERROR_THREAD_DOWN: Couldn't send a messige to the error thread."),
+            PricingError::ErrorThreadDown(messige) => write!(f, "ERROR_THREAD_DOWN: This error shouldend be probegated. Couldn't send a messige to the error thread, with messige {}", messige),
             PricingError::TOMLReadError => write!(f, "TOML_READ_ERROR: Error parsing the settings file, i may be malformed or from the wrong appication"),
             PricingError::FileReadError => write!(f, "FILE_READERROR: Coudn't read the settings file."),
             PricingError::WTFError(messig) => write!(f, "good job you dit somthing that sould be imposible:\n{}", messig),
@@ -440,11 +445,11 @@ impl From<rusqlite::Error> for PricingError {
 }
 impl std::error::Error for PricingError{}
 
-pub struct PricingStatus{
-    pub updates_processed: usize,
-    pub items_being_tracked: usize,
-    pub network_data_used: u64,
-    pub last_update_time: DateTime<Local>,
+struct PricingStatus{
+    updates_processed: usize,
+    items_being_tracked: usize,
+    network_data_used: u64,
+    last_update_time: DateTime<Local>,
     start_time: DateTime<Local>
 }
 

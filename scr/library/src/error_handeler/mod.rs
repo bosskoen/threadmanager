@@ -40,11 +40,11 @@ impl ErrorStatus {
 }
 
 pub enum ErrorOperation {
-    Print(String),
+    Print(String, String),
     ChangLed(RGB),
     BlickLed(RGB, f32),
-    PrintAndChangeLed(String, RGB),
-    PrintAndBlinkLed(String, RGB, f32),
+    PrintAndChangeLed(String,String, RGB),
+    PrintAndBlinkLed(String,String, RGB, f32),
     StopErr
 }
 
@@ -58,8 +58,8 @@ pub fn error_catchloop(resever:Receiver<ErrorOperation>,status: Arc<Mutex<Box<dy
 
     for error in resever.iter(){
         match error {
-            ErrorOperation::Print(mesiges) => {
-                eprintln!("{mesiges}");
+            ErrorOperation::Print(plugin,mesiges) => {
+                eprintln!("{mesiges} in {plugin}");
                 update_status(&status, ChangeColor::No);
             },
             ErrorOperation::ChangLed(rgb) => {
@@ -70,14 +70,14 @@ pub fn error_catchloop(resever:Receiver<ErrorOperation>,status: Arc<Mutex<Box<dy
                 //TODO cangled
                 update_status(&status, ChangeColor::Yes(rgb));
             }
-            ErrorOperation::PrintAndChangeLed(mesiges, rgb) => {
+            ErrorOperation::PrintAndChangeLed(plugin,mesiges, rgb) => {
                 //TODO cangled
-                eprintln!("{mesiges}");
+                eprintln!("{mesiges} in {plugin}");
                 update_status(&status, ChangeColor::Yes(rgb));
             },
-            ErrorOperation::PrintAndBlinkLed(mesiges, rgb, _) => {
+            ErrorOperation::PrintAndBlinkLed(plugin,mesiges, rgb, _) => {
                 //TODO cangled
-                eprintln!("{mesiges}");
+                eprintln!("{mesiges} in {plugin}");
                 update_status(&status, ChangeColor::Yes(rgb));
             },
             ErrorOperation::StopErr => break

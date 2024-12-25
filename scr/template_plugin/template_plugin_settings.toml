@@ -1,0 +1,7 @@
+#name for valedation
+name = "template_plugin"
+
+#settings
+#updateble
+step_rate = 30
+update_rate = 120

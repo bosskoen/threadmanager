@@ -22,7 +22,7 @@ impl Settings{
         let last_wote = fs::metadata(file_name).map_err(|_|PricingError::FileReadError )?.modified().map_err(|_| PricingError::FileReadError)?;
 
         let config= toml::from_str::<Settings>(&settings).map_err(|_| PricingError::TOMLReadError)?;
-        if config.name != "get_bz_pricing"{
+        if config.name != super::APP_NAME{
             return Err(PricingError::TOMLReadError);
         } 
         return Ok((config, last_wote));

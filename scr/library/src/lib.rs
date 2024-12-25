@@ -6,6 +6,23 @@ use std::any::Any;
 
 pub use chrono::{DateTime, Local, NaiveDateTime};
 
+#[derive(Debug)]
+pub struct ErrorThreadDownError{
+    messige: String,
+    thread: String
+}
+impl ErrorThreadDownError {
+    pub fn new (thread: &str,messige: &str) -> Self{
+        ErrorThreadDownError {thread: thread.to_string(), messige: messige.to_string() }
+    }
+}
+impl std::error::Error for ErrorThreadDownError {}
+
+impl std::fmt::Display for ErrorThreadDownError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Error thread whent down. missed messige: {} in {}", self.messige, self.thread)
+    }
+}
 
 pub trait Status: Send + Sync {
     fn format(&self) -> String;
