@@ -3,9 +3,10 @@ name = "hello"
 
 # setting
 data_base_path = "paht/to/data/base"
+table_name = "test"
+lookup_table_name= "ItemLoopupTable"
 #updateble
 url = "https://api.hypixel.net/v2/skyblock/bazaar"
-table_name = "test"
 step_rate = 30
 update_rate = 120
 

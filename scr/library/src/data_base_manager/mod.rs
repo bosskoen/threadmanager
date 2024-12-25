@@ -1,5 +1,5 @@
 use std::str;
-pub use rusqlite::Connection;
+pub use rusqlite::{self, Connection};
 
 use self::helper_functions::*;
 
@@ -54,6 +54,56 @@ pub fn write_database<T>(conn: &mut Connection, data: Vec<T>, table_name: &str, 
     }
     transaction.commit()?;
     Ok(())
+}
+
+/// a simpel fucntion to write to a SQLite database.
+/// this function doesn't check if the table or colums esits
+/// 
+/// # Arguments
+/// - `conn`: SQLite database connection.
+/// - `table_name`: Name of the table to check or create.
+/// - `data` : a vector that implements SQLformat.
+/// - `table_format` : a coma seperated string of colum names to tell this function were an how to write
+/// 
+/// # Example
+/// ``` no_run
+///     use library::data_base_manager::*;
+///     use rusqlite::ToSql;
+///     use rusqlite::Connection;
+/// 
+///     struct Test{
+///     id:u64, value1:String, value2: bool
+///     }
+///     impl SQLformat for Test{ 
+///      fn sqlformat(&self) -> Vec<&dyn ToSql>{
+///         vec![&self.value2, &self.id, &self.value1]
+///         }
+///     }
+///     let data = vec![Test{id:1,value1: "hello".to_string(), value2: true},
+///                     Test{id:2,value1: "world".to_string(), value2: false},
+///                     Test{id:5,value1: "cake".to_string(), value2: true}];
+///     let mut conn = Connection::open("test.db").unwrap();
+/// 
+///     write_database(&mut conn, data ,"test", "value2, id, value1");
+/// ```
+/// 
+pub fn try_write_database<T>(conn: &mut Connection, data: Vec<T>, table_name: &str, table_format: &str) -> Result<usize,DataBaseError>
+    where T: SQLformat
+{
+    let placeholders = generate_placeholder(table_format);
+    let command: String = format!("INSERT OR IGNORE INTO {} ({}) VALUES ({})", table_name, table_format, placeholders);
+
+    let mut row_changed =0;
+
+    let transaction = conn.transaction()?;
+    {
+        let mut stmt = transaction.prepare(&command)?;
+        for piece in data {
+            row_changed += stmt.execute( &piece.sqlformat()[..])?; 
+        }
+    }
+    transaction.commit()?;
+    Ok(row_changed)
 }
 
 /// a simpel function to read a SQLite database
