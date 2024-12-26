@@ -5,6 +5,7 @@ pub mod web_service_adapter;
 use std::any::Any;
 
 pub use chrono::{DateTime, Local, NaiveDateTime};
+pub use toml;
 
 #[derive(Debug)]
 pub struct ErrorThreadDownError{

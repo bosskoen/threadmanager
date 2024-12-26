@@ -288,7 +288,6 @@ dependencies = [
  "library",
  "serde",
  "serde_json",
- "toml",
 ]
 
 [[package]]
@@ -686,6 +685,7 @@ dependencies = [
  "reqwest",
  "retry",
  "rusqlite",
+ "toml",
  "url",
 ]
 
@@ -1267,7 +1267,6 @@ version = "0.1.0"
 dependencies = [
  "library",
  "serde",
- "toml",
 ]
 
 [[package]]
