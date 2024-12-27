@@ -7,7 +7,7 @@ use crate::parsing::Settings;
 
 
 pub struct Context {
-    pub stopflag: AtomicBool,
+    pub stopflag: Arc<AtomicBool>,
     status: Arc<Mutex<Box<dyn Status>>>,
     settings_path: String,
     pub conn: Connection,
@@ -21,7 +21,7 @@ pub struct Context {
 }
 
 impl Context {
-    pub fn from(stopflag: AtomicBool, status: Arc<Mutex<Box<dyn Status>>>, settings_path: String) -> Result<Self, PricingError>{
+    pub fn from(stopflag: Arc<AtomicBool>, status: Arc<Mutex<Box<dyn Status>>>, settings_path: String) -> Result<Self, PricingError>{
         let (settings, last_time_setting_written) = Settings::get(&settings_path)?;
         let data_base_path = settings.data_base_path;
         let data_table_name = settings.table_name;

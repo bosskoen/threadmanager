@@ -16,7 +16,7 @@ fn test_error_theard(error_handel: &Sender<ErrorOperation>) -> Result<(), Plugin
 }
 
 #[no_mangle]
-pub fn start(error_handel: Sender<ErrorOperation>, stopflag: AtomicBool, status: Arc<Mutex<Box<dyn Status>>>, settings_path: String) -> Result<(), Box<dyn std::error::Error>>{
+pub fn start(error_handel: Sender<ErrorOperation>, stopflag: Arc<AtomicBool>, status: Arc<Mutex<Box<dyn Status>>>, settings_path: String) -> Result<(), Box<dyn std::error::Error>>{
     let mut context = Context::from(stopflag, status, settings_path)?;
 
     test_error_theard(&error_handel).map_err(|err|match err{

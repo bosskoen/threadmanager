@@ -4,7 +4,7 @@ use library::{format_duration, impl_status, toml, DateTime, Local, Status};
 use serde::Deserialize;
 
 pub struct Context{
-    pub stopflag: AtomicBool,
+    pub stopflag: Arc<AtomicBool>,
     status: Arc<Mutex<Box<dyn Status>>>,
     settings_path: String,
     pub update_rate: usize ,
@@ -13,7 +13,7 @@ pub struct Context{
     last_time_setting_written: SystemTime,
 }
 impl Context {
-    pub fn from(stopflag: AtomicBool, status: Arc<Mutex<Box<dyn Status>>>, settings_path: String) -> Result<Self, PluginError>{
+    pub fn from(stopflag: Arc<AtomicBool>, status: Arc<Mutex<Box<dyn Status>>>, settings_path: String) -> Result<Self, PluginError>{
         let (settings, last_time_setting_written) = Settings::get(&settings_path)?;
 
         initialise_status(&status)?;

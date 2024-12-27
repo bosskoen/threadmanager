@@ -1,6 +1,6 @@
 mod led_controller;
 
-use std::{process::exit, sync::{mpsc::Receiver, Arc, Mutex}};
+use std::{error, process::exit, sync::{mpsc::Receiver, Arc, Mutex}, time::Duration};
 use chrono::{DateTime, Local};
 use crate::{format_duration, Status};
 
@@ -42,13 +42,13 @@ impl ErrorStatus {
 pub enum ErrorOperation {
     Print(String, String),
     ChangLed(RGB),
-    BlickLed(RGB, f32),
+    BlickLed(RGB, Duration),
     PrintAndChangeLed(String,String, RGB),
-    PrintAndBlinkLed(String,String, RGB, f32),
+    PrintAndBlinkLed(String,String, RGB,Duration),
     StopErr
 }
 
-pub fn error_catchloop(resever:Receiver<ErrorOperation>,status: Arc<Mutex<Box<dyn Status>>>){
+pub fn error_catchloop(resever:Receiver<ErrorOperation>,status: Arc<Mutex<Box<dyn Status>>>) -> Result<(), Box<dyn error::Error>>{
     *(status.lock().unwrap_or_else(|_| {
         eprintln!("couldn't initialise error status"); 
         exit(100)})
@@ -83,6 +83,7 @@ pub fn error_catchloop(resever:Receiver<ErrorOperation>,status: Arc<Mutex<Box<dy
             ErrorOperation::StopErr => break
         }
     }
+    Ok(())
 }
 
 fn update_status(status: &Arc<Mutex<Box<dyn Status>>>,new_color: ChangeColor){
