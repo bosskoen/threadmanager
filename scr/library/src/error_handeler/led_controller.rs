@@ -15,6 +15,10 @@ impl RGB {
         format!("#{:02X}{:02X}{:02X}", self.r, self.g, self.b)
     }
 
+    pub fn to_tuple(&self) -> (u8, u8, u8){
+        (self.r, self.g, self.b)
+    }
+
     #[allow(non_snake_case)]
     pub fn RED()->Self{Self::new(255,0,0)}
     #[allow(non_snake_case)]

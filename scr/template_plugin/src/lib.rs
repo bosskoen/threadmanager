@@ -1,6 +1,6 @@
 use std::{ sync::{atomic::{AtomicBool, Ordering}, mpsc::Sender, Arc, Mutex}, thread, time::{Duration, SystemTime}};
 
-use error_handeler::ErrorOperation;
+use error_handeler::{ErrorOperation, RGB};
 use library::*;
 use min_dependencies::*;
 
@@ -9,7 +9,7 @@ mod min_dependencies;
 const APP_NAME: &str = "template_plugin";
 
 fn test_error_theard(error_handel: &Sender<ErrorOperation>) -> Result<(), PluginError>{
-    if let Err(_) = error_handel.send(ErrorOperation::Print(APP_NAME.to_string(),"test print".to_string())){
+    if let Err(_) = error_handel.send(ErrorOperation::Print(APP_NAME.to_string(),"test print".to_string(), RGB::BLUE())){
         return Err(PluginError::ErrorThreadDown("test print".to_string()));
     }
     Ok(())
@@ -32,7 +32,7 @@ pub fn start(error_handel: Sender<ErrorOperation>, stopflag: Arc<AtomicBool>, st
         }
         if context.time_passed >= context.update_rate{
             context.time_passed = 0;
-            if let Err(_) = error_handel.send(ErrorOperation::Print(APP_NAME.to_string(),"test plugin action 'print'".to_string())){
+            if let Err(_) = error_handel.send(ErrorOperation::Print(APP_NAME.to_string(),"test plugin action 'print'".to_string(), RGB::from_hex(0x951fcc))){
                 return Err(Box::new(ErrorThreadDownError::new(APP_NAME,"test plugin action 'print'")));
             }
             context.update_status()?
@@ -43,7 +43,7 @@ pub fn start(error_handel: Sender<ErrorOperation>, stopflag: Arc<AtomicBool>, st
         let endloop =match start_of_loop.elapsed() {
             Ok(duration) => duration,
             Err(error) => {
-                if let Err(_) = error_handel.send(ErrorOperation::Print(APP_NAME.to_string(),format!("error while getting elepsted time: {}", error))){
+                if let Err(_) = error_handel.send(ErrorOperation::Print(APP_NAME.to_string(),format!("error while getting elepsted time: {}", error), RGB::from_hex(0xba8545))){
                     return Err(Box::new(ErrorThreadDownError::new(APP_NAME,&format!("error while getting elepsted time: {}", error))));
                 }
                 Duration::ZERO
@@ -53,8 +53,8 @@ pub fn start(error_handel: Sender<ErrorOperation>, stopflag: Arc<AtomicBool>, st
         if let Some(sleep_duration) = Duration::from_secs(context.step_rate as u64).checked_sub(endloop) {
             thread::sleep(sleep_duration);
         } else {
-            if let Err(_) = error_handel.send(ErrorOperation::Print(APP_NAME.to_string(),"loop took to long in price logger".to_string())){
-                return Err(Box::new(ErrorThreadDownError::new(APP_NAME,"loop took to long in price logger")));
+            if let Err(_) = error_handel.send(ErrorOperation::Print(APP_NAME.to_string(),"loop took to long".to_string(), RGB::from_hex(0xba8545))){
+                return Err(Box::new(ErrorThreadDownError::new(APP_NAME,"loop took to long")));
             }
             context.time_passed += (endloop.saturating_sub(Duration::from_secs(context.step_rate as u64))).as_secs() as usize;
         }

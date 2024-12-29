@@ -1,7 +1,7 @@
 use std::{sync::{atomic::{AtomicBool, Ordering}, mpsc::Sender, Arc, Mutex}, thread, time::{Duration, SystemTime}};
 use library::*;
 use data_base_manager::{rusqlite::{self, ToSql}, ColumnDefinition, Connection, DataBaseError, SQLReadable, SQLformat};
-use error_handeler::ErrorOperation;
+use error_handeler::{ErrorOperation, RGB};
 use parsing::BzData;
 use type_dependecies::{Context, PricingError};
 
@@ -35,7 +35,7 @@ pub fn start(error_handel: Sender<ErrorOperation>, stopflag: Arc<AtomicBool>, st
         let endloop =match start_of_loop.elapsed() {
             Ok(duration) => duration,
             Err(error) => {
-                if let Err(_) = error_handel.send(ErrorOperation::Print(APP_NAME.to_string(),format!("error while getting elepsted time: {error}"))){
+                if let Err(_) = error_handel.send(ErrorOperation::Print(APP_NAME.to_string(),format!("error while getting elepsted time: {error}"), RGB::from_hex(0xba8545))){
                     return Err(Box::new(ErrorThreadDownError::new(APP_NAME,&format!("error while getting elepsted time: {error}"))));
                 }
                 Duration::ZERO
@@ -45,8 +45,8 @@ pub fn start(error_handel: Sender<ErrorOperation>, stopflag: Arc<AtomicBool>, st
         if let Some(sleep_duration) = Duration::from_secs(context.step_rate as u64).checked_sub(endloop) {
             thread::sleep(sleep_duration);
         } else {
-            if let Err(_) = error_handel.send(ErrorOperation::Print(APP_NAME.to_string(),"loop took to long in price logger".to_string())){
-                return Err(Box::new(ErrorThreadDownError::new(APP_NAME, "loop took to long in price logger")));
+            if let Err(_) = error_handel.send(ErrorOperation::Print(APP_NAME.to_string(),"loop took to long".to_string(), RGB::from_hex(0xba8545))){
+                return Err(Box::new(ErrorThreadDownError::new(APP_NAME, "loop took to long")));
             }
             context.time_passed += (endloop.saturating_sub(Duration::from_secs(context.step_rate as u64))).as_secs() as usize;
         }
@@ -222,7 +222,7 @@ fn ensure_column_exists(conn: &Connection, table_name: &str, column_name: &str, 
 
 fn get_data_from_api(error_handel: &Sender<ErrorOperation>, context: &Context)-> Result<(BzData,(usize,usize)), PricingError>{
     let data= web_service_adapter::get_data_puls_size(&context.url, 3, Duration::from_secs(3)).map_err(|err|{
-        if let Err(_) = error_handel.send(ErrorOperation::Print(APP_NAME.to_string(), format!("error while feching data from api, retrying nex cycel\n{err}"))){
+        if let Err(_) = error_handel.send(ErrorOperation::Print(APP_NAME.to_string(), format!("error while feching data from api, retrying nex cycel\n{err}"), RGB::from_hex(0xba8545))){
             return PricingError::ErrorThreadDown(format!("error while feching data from api, retrying nex cycel\n{err}"));
         }
         PricingError::NonFatal}
@@ -232,12 +232,12 @@ fn get_data_from_api(error_handel: &Sender<ErrorOperation>, context: &Context)->
 
     let json_data= BzData::from_data(data).map_err(|err|
     match err {
-        PricingError::JSONReadError => {if let Err(_) = error_handel.send(ErrorOperation::Print(APP_NAME.to_string(),"error while parsing the json, retrying nex cycel".to_string())){
+        PricingError::JSONReadError => {if let Err(_) = error_handel.send(ErrorOperation::Print(APP_NAME.to_string(),"error while parsing the json, retrying nex cycel".to_string(), RGB::from_hex(0xba8545))){
             return PricingError::ErrorThreadDown("error while parsing the json, retrying nex cycel".to_string());
         }
         PricingError::NonFatal
         },
-        PricingError::JSONFormatError(messige) => {if let Err(_) = error_handel.send(ErrorOperation::Print(APP_NAME.to_string(),format!("error while parsing the json, retrying nex cycel\n{messige}"))){
+        PricingError::JSONFormatError(messige) => {if let Err(_) = error_handel.send(ErrorOperation::Print(APP_NAME.to_string(),format!("error while parsing the json, retrying nex cycel\n{messige}"), RGB::from_hex(0xba8545))){
             return PricingError::ErrorThreadDown(format!("error while parsing the json, retrying nex cycel\n{messige}"));
         }
         PricingError::NonFatal
@@ -246,7 +246,7 @@ fn get_data_from_api(error_handel: &Sender<ErrorOperation>, context: &Context)->
     })?;
 
     if !json_data.success{
-        if let Err(_) = error_handel.send(ErrorOperation::Print(APP_NAME.to_string(),"JSON had a unexpexted erro, retrying nex cycel".to_string())){
+        if let Err(_) = error_handel.send(ErrorOperation::Print(APP_NAME.to_string(),"JSON had a unexpexted erro, retrying nex cycel".to_string(), RGB::from_hex(0xba8545))){
             return Err(PricingError::ErrorThreadDown("JSON had a unexpexted erro, retrying nex cycel".to_string()));
         }
         return Err(PricingError::NonFatal);
@@ -269,7 +269,7 @@ fn update_index_database(json_data: &BzData, context: &mut Context, error_handel
     .collect();
 
     if data_base_manager::try_write_database(&mut context.conn,hypixel_ids , &context.lookup_table_name, "HypixelID")? > 0{
-        if let Err(_) = error_handel.send(ErrorOperation::Print(APP_NAME.to_string(),"new item added to the database, require manual naming.".to_string())){
+        if let Err(_) = error_handel.send(ErrorOperation::NonErrorPrint(APP_NAME.to_string(),"new item added to the database, require manual naming.".to_string(), RGB::from_hex(0x4d7ebf) )){
             return Err(PricingError::ErrorThreadDown("new item added to the database, require manual naming.".to_string()));
         }
     };
@@ -320,9 +320,9 @@ fn write_database(context: &mut Context, json_data: BzData, error_handel: &Sende
                 buy_price:value.quick_status.buyPrice})
         },
         Err(e) => {
-            if let Err(_) =error_handel.send(ErrorOperation::Print(APP_NAME.to_string(), format!("coudind read :\"{}\"\nError: {}", value.product_id,e))){
+            if let Err(_) =error_handel.send(ErrorOperation::Print(APP_NAME.to_string(), format!("coudn't read product id \"{}\" form data base\nError: {}", value.product_id, e), RGB::from_hex(0xba8545))){
                 error_send_failed = true;
-                error_messig.push(format!("coudind read :\"{}\"\nError: {}", value.product_id,e));
+                error_messig.push(format!("coudn't read product id \"{}\" form data base\nError: {}", value.product_id,e));
             }
             None
         }

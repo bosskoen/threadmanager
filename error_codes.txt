@@ -4,3 +4,4 @@
 103: ErrorThread's resever channel was dropt voor dat hij de stop messige gekregen had
 104: ErrorThread paniced tijdes het afsluiten
 105: kon geen error naar error thread sturen
+106: kon main niet zeggen unexpexted crach
