@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use library::error_handeler::{print, print_error, RGB};
 use crate::{private_lib::Manager, Mode};
 
 pub fn initialise_cli() -> HashMap<&'static str, Box<dyn Fn(&[&str], &mut Manager)>>{
@@ -15,115 +16,115 @@ pub fn initialise_cli() -> HashMap<&'static str, Box<dyn Fn(&[&str], &mut Manage
 
 fn start_app(args: &[&str], open_threads: &mut Manager){
     if args.len() == 0{
-        println!("No thread name provided. Please specify a thread name.");
+        print("No thread name provided. Please specify a thread name.", RGB::WHITE());
         return;
     }else if args.len() > 1{
-        println!("Multiple thread names provided. Please specify only one thread name.");
+        print("Multiple thread names provided. Please specify only one thread name.", RGB::WHITE());
         return;
     }
-    println!("Attempting to start thread: {}", args[0]);
+    print(&format!("Attempting to start thread: {}", args[0]), RGB::WHITE());
     if let Err(err) = open_threads.start_new_thread(args[0].to_string()){
-        println!("{err}");
+        print_error("CLI", &format!("{err}"), RGB::ERROR());
         return;
     }
     if open_threads.is_running(args[0]){
-        println!("Thread {} is running", args[0]);
+        print(&format!("Thread {} is running", args[0]), RGB::WHITE());
     }else{
-        println!("Thread {} failed to start", args[0]);
+        print(&format!("Thread {} failed to start", args[0]), RGB::WHITE());
     }
 }
 
 fn stop_app(args: &[&str],open_threads: &mut Manager){
     if args.len() == 0{
-        println!("No thread name provided. Please specify a thread name.");
+        print("No thread name provided. Please specify a thread name.", RGB::WHITE());
         return;
     }else if args.len() > 1{
-        println!("Multiple thread names provided. Please specify only one thread name.");
+        print("Multiple thread names provided. Please specify only one thread name.", RGB::WHITE());
         return;
     }
     if args[0] == "all"{
-        println!("Attempting to stop all threads");
+        print("Attempting to stop all threads", RGB::WHITE());
         open_threads.stop_all_threads();
-        println!("All threads stopped");
+        print("All threads stopped", RGB::WHITE());
         return;
     }
-    println!("Attempting to stop thread: {}", args[0]);
+    print(&format!("Attempting to stop thread: {}", args[0]), RGB::WHITE());
     if let Err(err) = open_threads.stop_thread(args[0].to_string()){
-        println!("{err}");
+        print_error("CLI", &format!("{err}"), RGB::ERROR());
         return;
     }
     if open_threads.is_running(args[0]){
-        println!("Thread {} failed to stop", args[0]);
+        print(&format!("Thread {} failed to stop", args[0]), RGB::WHITE());
     }else{
-        println!("Thread {} stopped", args[0]);
+        print(&format!("Thread {} stopped", args[0]), RGB::WHITE());
     }
 }
 
 fn get_status(args: &[&str], open_threads: &mut Manager){
     if args.len() == 0{
-        println!("No thread name provided. Please specify a thread name.");
+        print("No thread name provided. Please specify a thread name.", RGB::WHITE());
         return;
     }else if args.len() > 1{
-        println!("Multiple thread names provided. Please specify only one thread name.");
+        print("Multiple thread names provided. Please specify only one thread name.", RGB::WHITE());
         return;
     }
     if let Err(err) = open_threads.get_status(args[0].to_string()){
-        println!("{err}");
+        print_error("CLI", &format!("{err}"), RGB::ERROR());
     }
 }
 
 fn list_apps(args: &[&str], open_threads: &mut Manager){
     if args.len() == 0{
-        println!("No argument provided. Please specify 'running', 'stopped', or 'all'.");
+        print("No argument provided. Please specify 'running', 'stopped', or 'all'.", RGB::WHITE());
         return;
     }else if args.len() > 1{
-        println!("Invalid argument. Please specify 'running', 'stopped', or 'all'.");
+        print("Invalid argument. Please specify 'running', 'stopped', or 'all'.", RGB::WHITE());
         return;
     }
     match args[0] {
         "running" => open_threads.list_threads(Mode::Running),
         "stopped" => open_threads.list_threads(Mode::Stopped),
         "all" => open_threads.list_threads(Mode::All),
-        _ => println!("Invalid argument. Please specify 'running', 'stopped', or 'all'.")
+        _ => print("Invalid argument. Please specify 'running', 'stopped', or 'all'.", RGB::WHITE())
     }
 }
 
 fn help(args: &[&str], open_threads: &mut Manager){
     if args.len() == 0 {
         // General help message for all commands
-        println!("Available commands:\n\
+        print("Available commands:\n\
             start <thread name> - Start a thread\n\
             stop <thread name> - Stop a thread\n\
             status <thread name> - Get the status of a thread\n\
             list <running/stopped/all> - List all threads\n\
-            help <command>||[app <app name>] - Get help for a specific command");
+            help <command>||[app <app name>] - Get help for a specific command", RGB::WHITE());
         return;
     } else if args.len() > 1 {
         if args[0] == "app" {
             if args.len() == 2 {
                 // Provide help for a specific app
                 if let Err(er) = open_threads.help_message(args[1].to_string()) {
-                    println!("{er}");
+                    print_error("CLI", &format!("{er}"), RGB::ERROR());
                 }
             } else {
-                println!("Invalid argument. Please specify 'app <app name>' to get help for a specific app.");
+                print("Invalid argument. Please specify 'app <app name>' to get help for a specific app.", RGB::WHITE());
             }
             return;
         } else {
             // Invalid argument case
-            println!("Invalid argument. Please specify 'app <app name>' to get help for a specific app.");
+            print("Invalid argument. Please specify 'app <app name>' to get help for a specific app.", RGB::WHITE());
             return;
         }
     }
     // Specific help for a command
     match args[0] {
-        "start" => println!("start <thread name> - Start a thread with the specified name"),
-        "stop" => println!("stop <thread name> - Stop the thread with the specified name"),
-        "status" => println!("status <thread name> - Get the status of a running thread"),
-        "list" => println!("list <running/stopped/all> - List threads based on their status (running, stopped, or all)"),
-        "help" => println!("help <command>||[app <app name>] - Get help for a specific command or app"),
-        _ => println!("Invalid command. Please specify 'start', 'stop', 'status', 'list', or 'help'."),
+        "start" => print("start <thread name> - Start a thread with the specified name", RGB::WHITE()),
+        "stop" => print("stop <thread name> - Stop the thread with the specified name", RGB::WHITE()),
+        "status" => print("status <thread name> - Get the status of a running thread", RGB::WHITE()),
+        "list" => print("list <running/stopped/all> - List threads based on their status (running, stopped, or all)", RGB::WHITE()),
+        "help" => print("help <command>||[app <app name>] - Get help for a specific command or app", RGB::WHITE()),
+        _ => print("Invalid command. Please specify 'start', 'stop', 'status', 'list', or 'help'.", RGB::WHITE()),
     }
 }
 
-//TODO update logic, exit
+//TODO update logic, exit, update settings

@@ -11,7 +11,7 @@ help_message = "this is a help mesige"
         
 [apps.app2]
 name = "app2"
-dll_path = "path/to/dll2"
-setting_path = "path/to/settings2"
+dll_path = "E:\\project\\hypixelPI\\git\\builds\\debug\\template_plugin.dll"
+setting_path = "E:\\project\\hypixelPI\\git\\scr\\template_plugin\\template_plugin_settings.toml"
 help_message = "this is a help mesige"
         

@@ -1,25 +1,34 @@
-use std::{io::{self, Write}, sync::mpsc};
+use std::{io::{self, Write}, process::exit, sync::mpsc};
 
+use library::error_handeler::{print_error,print, RGB};
 use private_lib::*;
 mod private_lib;
 mod cli;
 
 fn main() {
+    //TODO custor setigns file
+    print("CLI Plugin Manager", RGB::CYAN());
     let (error_tx, error_rx) = mpsc::channel();
     let (crach_tx, crach_rx) = mpsc::channel::<String>();
-    let mut open_threads = Manager::new(error_tx, r"E:\project\hypixelPI\git\scr\threadmanager\genaral_setting.toml", crach_tx).expect("msg"); //TODO settings and error
+    let mut open_threads = match Manager::new(error_tx, r"E:\project\hypixelPI\git\scr\threadmanager\genaral_setting.toml", crach_tx){
+        Ok(threads) => threads,
+        Err(err) => {
+            print_error("main", &format!("Failed to start threadmaniger: {}", err), RGB::ERROR());
+            exit(107);
+        }
+    };
     open_threads.start_error(error_rx);
     let cli = cli::initialise_cli();
 
     loop {
         print!("> ");
         if let Err(err) = io::stdout().flush(){
-            println!("Failed to flush stdout: {}", err);
+            print_error("main", &format!("Failed to flush stdout: {}", err), RGB::ERROR());
             continue;
         }
         let mut input = String::new();
-        if let Err(err) =io::stdin().read_line(&mut input){
-            println!("Failed to read line: {}", err);
+        if let Err(err) = io::stdin().read_line(&mut input){
+            print_error("main", &format!("Failed to read line: {}", err), RGB::ERROR());
             continue;
         }
 
@@ -34,7 +43,7 @@ fn main() {
         if let Some(func) = cli.get(command) {
             func(args.collect::<Vec<&str>>().as_slice(), &mut open_threads);
         } else {
-            println!("Command not found. Type 'help' for a list of commands.");
+            print("Command not found. Type 'help' for a list of commands.", RGB::WHITE());
         }
     }
 }

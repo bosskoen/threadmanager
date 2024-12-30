@@ -10,7 +10,6 @@ mod type_dependecies;
 
 const APP_NAME: &str = "get_bz_pricing";
 
-
 #[no_mangle]
 pub fn start(error_handel: Sender<ErrorOperation>, stopflag: Arc<AtomicBool>, status: Arc<Mutex<Box<dyn Status>>>, settings_path: String) -> Result<(), Box<dyn std::error::Error>>{
 
@@ -35,8 +34,8 @@ pub fn start(error_handel: Sender<ErrorOperation>, stopflag: Arc<AtomicBool>, st
         let endloop =match start_of_loop.elapsed() {
             Ok(duration) => duration,
             Err(error) => {
-                if let Err(_) = error_handel.send(ErrorOperation::Print(APP_NAME.to_string(),format!("error while getting elepsted time: {error}"), RGB::from_hex(0xba8545))){
-                    return Err(Box::new(ErrorThreadDownError::new(APP_NAME,&format!("error while getting elepsted time: {error}"))));
+                if let Err(_) = error_handel.send(ErrorOperation::Print(APP_NAME.to_string(),format!("error while getting elapsed time: {error}"), RGB::ERROR())){
+                    return Err(Box::new(ErrorThreadDownError::new(APP_NAME,&format!("error while getting elapsed time: {error}"))));
                 }
                 Duration::ZERO
             },
@@ -45,8 +44,8 @@ pub fn start(error_handel: Sender<ErrorOperation>, stopflag: Arc<AtomicBool>, st
         if let Some(sleep_duration) = Duration::from_secs(context.step_rate as u64).checked_sub(endloop) {
             thread::sleep(sleep_duration);
         } else {
-            if let Err(_) = error_handel.send(ErrorOperation::Print(APP_NAME.to_string(),"loop took to long".to_string(), RGB::from_hex(0xba8545))){
-                return Err(Box::new(ErrorThreadDownError::new(APP_NAME, "loop took to long")));
+            if let Err(_) = error_handel.send(ErrorOperation::Print(APP_NAME.to_string(),"loop took too long".to_string(), RGB::WARNING())){
+                return Err(Box::new(ErrorThreadDownError::new(APP_NAME, "loop took too long")));
             }
             context.time_passed += (endloop.saturating_sub(Duration::from_secs(context.step_rate as u64))).as_secs() as usize;
         }
@@ -54,18 +53,18 @@ pub fn start(error_handel: Sender<ErrorOperation>, stopflag: Arc<AtomicBool>, st
     Ok(())
 }
 
-fn validate_data_base(conn: &mut Connection,table_name: &str,lookup_table_name: &str ) -> Result<(), PricingError>{
+fn validate_data_base(conn: &mut Connection,table_name: &str,lookup_table_name: &str ) -> Result<(), PricingError> {
     //CREATE TABLE [name](
-	//ID INT NOT NULL,
-	//timeStamp INT NOT NULL, 
-	//sellPrice REAL NOT NULL,
-	//buyPrice REAL NOT NULL,
-	//sellVolume INT NOT NULL,
-	//sellMovingWeek INT NOT NULL, 
-	//buyVolume INT NOT NULL,
-	//buyMovingWeek INT NOT NULL,
-	//PRIMARY KEY (ID , TimeStamp)
-	//);
+    //ID INT NOT NULL,
+    //timeStamp INT NOT NULL, 
+    //sellPrice REAL NOT NULL,
+    //buyPrice REAL NOT NULL,
+    //sellVolume INT NOT NULL,
+    //sellMovingWeek INT NOT NULL, 
+    //buyVolume INT NOT NULL,
+    //buyMovingWeek INT NOT NULL,
+    //PRIMARY KEY (ID , TimeStamp)
+    //);
     let collums = vec![define_column!("ID","INT", true, true),
     define_column!("timeStamp","INT", true, true),
     define_column!("sellPrice","REAL", true, false),
@@ -102,6 +101,7 @@ fn check_and_create_lookup_table(conn: &Connection, table_name: &str) -> Result<
 
     Ok(())
 }
+
 fn create_table_if_not_exists(conn: &Connection, table_name: &str) -> Result<(), PricingError> {
     conn.execute(
         &format!(
@@ -118,7 +118,7 @@ fn create_table_if_not_exists(conn: &Connection, table_name: &str) -> Result<(),
 }
 
 /// Fetches the table schema using `PRAGMA table_info`
-/// returns true if collum exists
+/// returns true if column exists
 fn fetch_table_schema(conn: &Connection, table_name: &str) -> Result<Vec<(String, String, isize)>, PricingError> {
     let mut stmt = conn.prepare(&format!("PRAGMA table_info({});", table_name))?;
     let column_info = stmt.query_map([], |row| {
@@ -220,44 +220,46 @@ fn ensure_column_exists(conn: &Connection, table_name: &str, column_name: &str, 
     Ok(())
 }
 
-fn get_data_from_api(error_handel: &Sender<ErrorOperation>, context: &Context)-> Result<(BzData,(usize,usize)), PricingError>{
-    let data= web_service_adapter::get_data_puls_size(&context.url, 3, Duration::from_secs(3)).map_err(|err|{
-        if let Err(_) = error_handel.send(ErrorOperation::Print(APP_NAME.to_string(), format!("error while feching data from api, retrying nex cycel\n{err}"), RGB::from_hex(0xba8545))){
-            return PricingError::ErrorThreadDown(format!("error while feching data from api, retrying nex cycel\n{err}"));
+fn get_data_from_api(error_handel: &Sender<ErrorOperation>, context: &Context)-> Result<(BzData,(usize,usize)), PricingError> {
+    let data = web_service_adapter::get_data_puls_size(&context.url, 3, Duration::from_secs(3)).map_err(|err| {
+        if let Err(_) = error_handel.send(ErrorOperation::Print(APP_NAME.to_string(), format!("error while fetching data from api, retrying next cycle\n{err}"), RGB::WARNING())){
+            return PricingError::ErrorThreadDown(format!("error while fetching data from api, retrying next cycle\n{err}"));
         }
-        PricingError::NonFatal}
-    );
+        PricingError::NonFatal
+    });
 
-    let (data,(data_out, _data_in)) = data?;
+    let (data, (data_out, _data_in)) = data?;
 
-    let json_data= BzData::from_data(data).map_err(|err|
+    let json_data = BzData::from_data(data).map_err(|err|
     match err {
-        PricingError::JSONReadError => {if let Err(_) = error_handel.send(ErrorOperation::Print(APP_NAME.to_string(),"error while parsing the json, retrying nex cycel".to_string(), RGB::from_hex(0xba8545))){
-            return PricingError::ErrorThreadDown("error while parsing the json, retrying nex cycel".to_string());
-        }
-        PricingError::NonFatal
+        PricingError::JSONReadError => {
+            if let Err(_) = error_handel.send(ErrorOperation::Print(APP_NAME.to_string(),"error while parsing the json, retrying next cycle".to_string(), RGB::ERROR())){
+                return PricingError::ErrorThreadDown("error while parsing the json, retrying next cycle".to_string());
+            }
+            PricingError::NonFatal
         },
-        PricingError::JSONFormatError(messige) => {if let Err(_) = error_handel.send(ErrorOperation::Print(APP_NAME.to_string(),format!("error while parsing the json, retrying nex cycel\n{messige}"), RGB::from_hex(0xba8545))){
-            return PricingError::ErrorThreadDown(format!("error while parsing the json, retrying nex cycel\n{messige}"));
-        }
-        PricingError::NonFatal
+        PricingError::JSONFormatError(message) => {
+            if let Err(_) = error_handel.send(ErrorOperation::Print(APP_NAME.to_string(),format!("error while parsing the json, retrying next cycle\n{message}"), RGB::ERROR())){
+                return PricingError::ErrorThreadDown(format!("error while parsing the json, retrying next cycle\n{message}"));
+            }
+            PricingError::NonFatal
         },
         _ => err,
     })?;
 
-    if !json_data.success{
-        if let Err(_) = error_handel.send(ErrorOperation::Print(APP_NAME.to_string(),"JSON had a unexpexted erro, retrying nex cycel".to_string(), RGB::from_hex(0xba8545))){
-            return Err(PricingError::ErrorThreadDown("JSON had a unexpexted erro, retrying nex cycel".to_string()));
+    if !json_data.success {
+        if let Err(_) = error_handel.send(ErrorOperation::Print(APP_NAME.to_string(),"JSON had an unexpected error, retrying next cycle".to_string(), RGB::ERROR())){
+            return Err(PricingError::ErrorThreadDown("JSON had an unexpected error, retrying next cycle".to_string()));
         }
         return Err(PricingError::NonFatal);
     }
 
-    Ok((json_data,(data_out,data_out)))
+    Ok((json_data, (data_out, data_out)))
 }
 
-fn update_index_database(json_data: &BzData, context: &mut Context, error_handel: &Sender<ErrorOperation>) ->Result<(), PricingError>{
-    struct Name{
-        name:String
+fn update_index_database(json_data: &BzData, context: &mut Context, error_handel: &Sender<ErrorOperation>) -> Result<(), PricingError> {
+    struct Name {
+        name: String
     }
     impl SQLformat for Name {
         fn sqlformat(&self) -> Vec<&dyn ToSql> {
@@ -265,20 +267,20 @@ fn update_index_database(json_data: &BzData, context: &mut Context, error_handel
         }
     }
     let hypixel_ids = json_data.products.values()
-    .map(|value | Name{name: value.product_id.clone()})
+    .map(|value| Name { name: value.product_id.clone() })
     .collect();
 
-    if data_base_manager::try_write_database(&mut context.conn,hypixel_ids , &context.lookup_table_name, "HypixelID")? > 0{
-        if let Err(_) = error_handel.send(ErrorOperation::NonErrorPrint(APP_NAME.to_string(),"new item added to the database, require manual naming.".to_string(), RGB::from_hex(0x4d7ebf) )){
-            return Err(PricingError::ErrorThreadDown("new item added to the database, require manual naming.".to_string()));
+    if data_base_manager::try_write_database(&mut context.conn, hypixel_ids, &context.lookup_table_name, "HypixelID")? > 0 {
+        if let Err(_) = error_handel.send(ErrorOperation::NonErrorPrint(APP_NAME.to_string(),"new item added to the database, requires manual naming.".to_string(), RGB::INFO())){
+            return Err(PricingError::ErrorThreadDown("new item added to the database, requires manual naming.".to_string()));
         }
     };
 
     Ok(())
 }
 
-fn write_database(context: &mut Context, json_data: BzData, error_handel: &Sender<ErrorOperation>) -> Result<(bool, String), PricingError>{
-    struct BazaData{
+fn write_database(context: &mut Context, json_data: BzData, error_handel: &Sender<ErrorOperation>) -> Result<(bool, String), PricingError> {
+    struct BazaData {
         id: usize,
         time_stamp: u64,
         sell_price: f64,
@@ -290,77 +292,76 @@ fn write_database(context: &mut Context, json_data: BzData, error_handel: &Sende
     }
     impl SQLformat for BazaData {
         fn sqlformat(&self) -> Vec<&dyn ToSql> {
-            vec![&self.id,&self.time_stamp,&self.sell_price,&self.buy_price,&self.sell_volme,&self.sell_moving_week,&self.buy_volme,&self.buy_moving_week]
+            vec![&self.id, &self.time_stamp, &self.sell_price, &self.buy_price, &self.sell_volme, &self.sell_moving_week, &self.buy_volme, &self.buy_moving_week]
         }
     }
-    struct Id{
+    struct Id {
         id: usize
     }
     impl SQLReadable for Id {
-        fn from_row(row: &rusqlite::Row) -> Result<Self,DataBaseError> {
-            let id=row.get(0)?;
-            Ok(Id{id})
+        fn from_row(row: &rusqlite::Row) -> Result<Self, DataBaseError> {
+            let id = row.get(0)?;
+            Ok(Id { id })
         }
     }
 
     let mut error_send_failed = false;
-    let mut error_messig: Vec<String> = Vec::new();
+    let mut error_message: Vec<String> = Vec::new();
     let time = json_data.last_updated;
-    let prices_data =json_data.products.into_values()
+    let prices_data = json_data.products.into_values()
     .filter_map(|value| {
-        match  data_base_manager::read_database::<Id>(&mut context.conn, &context.lookup_table_name, "ID", &format!("WHERE HypixelID = '{}'", value.product_id)){
+        match data_base_manager::read_database::<Id>(&mut context.conn, &context.lookup_table_name, "ID", &format!("WHERE HypixelID = '{}'", value.product_id)) {
             Ok(id) => {
-            Some(BazaData{id: id[0].id,
-                time_stamp: time,
-                sell_price: value.quick_status.sellPrice,
-                sell_volme: value.quick_status.sellVolume,
-                buy_moving_week: value.quick_status.buyMovingWeek,
-                buy_volme: value.quick_status.buyVolume,
-                sell_moving_week: value.quick_status.sellMovingWeek,
-                buy_price:value.quick_status.buyPrice})
-        },
-        Err(e) => {
-            if let Err(_) =error_handel.send(ErrorOperation::Print(APP_NAME.to_string(), format!("coudn't read product id \"{}\" form data base\nError: {}", value.product_id, e), RGB::from_hex(0xba8545))){
-                error_send_failed = true;
-                error_messig.push(format!("coudn't read product id \"{}\" form data base\nError: {}", value.product_id,e));
+                Some(BazaData {
+                    id: id[0].id,
+                    time_stamp: time,
+                    sell_price: value.quick_status.sellPrice,
+                    sell_volme: value.quick_status.sellVolume,
+                    buy_moving_week: value.quick_status.buyMovingWeek,
+                    buy_volme: value.quick_status.buyVolume,
+                    sell_moving_week: value.quick_status.sellMovingWeek,
+                    buy_price: value.quick_status.buyPrice
+                })
+            },
+            Err(e) => {
+                if let Err(_) = error_handel.send(ErrorOperation::Print(APP_NAME.to_string(), format!("couldn't read product id \"{}\" from database\nError: {}", value.product_id, e), RGB::ERROR())){
+                    error_send_failed = true;
+                    error_message.push(format!("couldn't read product id \"{}\" from database\nError: {}", value.product_id, e));
+                }
+                None
             }
-            None
         }
-        }
-        })
-        .collect();
+    })
+    .collect();
 
-    data_base_manager::write_database(&mut context.conn, prices_data, &context.data_table_name, "ID, timeStamp, sellPrice, buyPrice,sellVolume, sellMovingWeek, buyVolume, buyMovingWeek")?;
+    data_base_manager::write_database(&mut context.conn, prices_data, &context.data_table_name, "ID, timeStamp, sellPrice, buyPrice, sellVolume, sellMovingWeek, buyVolume, buyMovingWeek")?;
 
-    Ok((error_send_failed, error_messig.join(";\n")))
-
+    Ok((error_send_failed, error_message.join(";\n")))
 }
 
-fn get_bz_data(error_handel: &Sender<ErrorOperation>, context: &mut Context) -> Result<(), PricingError>{
+fn get_bz_data(error_handel: &Sender<ErrorOperation>, context: &mut Context) -> Result<(), PricingError> {
     // get data
     let json_data = get_data_from_api(error_handel, context);
-    if let Err(PricingError::NonFatal) = json_data{
+    if let Err(PricingError::NonFatal) = json_data {
         return Ok(());
     }
-    let (json_data,(data_out,data_in)) = json_data?;
+    let (json_data, (data_out, data_in)) = json_data?;
 
-    // write new item's
+    // write new items
     update_index_database(&json_data, context, error_handel)?;
 
-    // write to data base
+    // write to database
     let num_items = json_data.products.len();
-    let (error_send_failed, error_messig) = write_database(context, json_data, error_handel)?;
+    let (error_send_failed, error_message) = write_database(context, json_data, error_handel)?;
 
     context.update_status(num_items, data_in + data_out)?;
-    
-    if error_send_failed{
-        return Err(PricingError::ErrorThreadDown(error_messig));
+
+    if error_send_failed {
+        return Err(PricingError::ErrorThreadDown(error_message));
     }
 
     Ok(())
 }
-
-
 
 #[cfg(test)]
 mod tests {

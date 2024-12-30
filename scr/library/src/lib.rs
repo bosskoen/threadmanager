@@ -7,6 +7,9 @@ use std::any::Any;
 pub use chrono::{DateTime, Local, NaiveDateTime};
 pub use toml;
 
+#[macro_use]
+extern crate lazy_static;
+
 #[derive(Debug)]
 pub struct ErrorThreadDownError{
     messige: String,
