@@ -213,7 +213,7 @@ pub fn ensure_table_format(
     let pre_existing_columns: Vec<(String, String, bool, bool)> = stmt
     .query_map([], |row| {
         let col_name: String = row.get(1)?; // Column name
-        let col_type: String = row.get(2)?; // Column type
+        let col_type: String = row.get::<_,String>(2)?.trim().split_whitespace().next().unwrap_or_default().to_owned(); // Column type
         let not_null: bool = row.get(3)?; // is not null
         let is_primary_key: bool = row.get::<_, i32>(5)? != 0; // Is primary key
 
@@ -235,7 +235,7 @@ pub fn ensure_table_format(
     }
     lock_tracaction.commit()?;
     Ok(())
-}//TODO alleen naar het eerst word kijke in type
+}
 
 
 #[cfg(test)]

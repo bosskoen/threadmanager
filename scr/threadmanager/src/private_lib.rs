@@ -8,6 +8,8 @@ impl_status!(IniStatus, |_| String::from("initialization status"));
 
 const ERROR_THREAD_DOWN: i32 = 105;
 const CRASH_NOTIFIER_DOWN: i32 = 106;
+const ERROR_THREAD_RESEVER_DOWN:i32 = 103;
+const ERROR_PENICED:i32 = 104;
 
 pub struct Manager {
     map: HashMap<String, ThreadHandel>,
@@ -30,13 +32,13 @@ impl Manager {
     }
 
     pub fn start_new_thread(&mut self, name: String) -> Result<(), ManagerError> {
-        let sett = if let Some(value) = self.settings.apps.get(&name) {
+        let app_setting = if let Some(value) = self.settings.apps.get(&name) {
             value
         } else {
             return Err(ManagerError::AppDoesntExist(name));
         };
-        let app_setting_path = sett.setting_path.clone();
-        let dll_path = sett.dll_path.clone();
+        let app_setting_path = app_setting.setting_path.clone();
+        let dll_path = app_setting.dll_path.clone();
 
         if self.map.contains_key(&name) {
             return Err(ManagerError::AppAlreadyRunning);
@@ -56,7 +58,7 @@ impl Manager {
 
         self.map.insert(name, ThreadHandel::new(handle, stop_flag, status));
         Ok(())
-    } //TODO als stop error
+    }
 
     pub fn stop_thread(&mut self, name: String) -> Result<(), ManagerError> {
         if let Some(thread) = self.map.remove(&name) {
@@ -83,9 +85,12 @@ impl Manager {
             if name == "errorThread" {
                 continue;
             }
-            if let Err(err) = handle.handle.join() {
-                print_error("Manager", &format!("Error while stopping {}: {:?}", name, err), RGB::ERROR());
+            print(&format!("stopping: {name}"), RGB::NOTICE());
+            handle.stop_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+            if let Err(x) = handle.handle.join() {
+                print_error("Manager", &format!("{} panicked while closing with error\n{:?}", name, x), RGB::ERROR());
             }
+            println!("");
         }
     }
 
@@ -109,6 +114,7 @@ impl Manager {
                 for (_, setting) in self.settings.apps.iter() {
                     print(&setting.name, RGB::WHITE());
                 }
+                print("errorThread", RGB::TRACE());
             },
             Mode::Running => {
                 for (name, _) in self.map.iter() {
@@ -129,10 +135,7 @@ impl Manager {
         let status_clone = Arc::clone(&status);
 
         let handle = thread::spawn(move || {
-            if let Err(err) = error_catchloop(error_receiver, status) {
-                print_error("Manager", &format!("{err}"), RGB::ERROR());
-                exit(0) // TODO
-            }     //TODO error laten return
+            error_catchloop(error_receiver, status) 
         });
 
         self.map.insert(String::from("errorThread"), ThreadHandel::new(handle, Arc::new(AtomicBool::new(false)), status_clone));
@@ -140,12 +143,12 @@ impl Manager {
     pub fn stop_error(&mut self) {
         if let Err(_) = self.error_sender.send(ErrorOperation::StopErr) {
             print_error("Manager", "ErrorThread's receiver has been dropped too early", RGB::ERROR());
-            exit(103);
+            exit(ERROR_THREAD_RESEVER_DOWN);
         }
         if let Some(thread) = self.map.remove(&String::from("errorThread")) {
             if let Err(x) = thread.handle.join() {
                 print_error("Manager", &format!("ErrorThread panicked while closing with error\n{:?}", x), RGB::ERROR());
-                exit(104)
+                exit(ERROR_PENICED)
             }
         }
     }
@@ -191,6 +194,26 @@ fn printstatus(status: &Arc<Mutex<Box<dyn Status>>>) {
 
 fn thread_logic(dll_path: &str, name: String, sender_clone: Sender<ErrorOperation>, stop_flag: Arc<AtomicBool>, status: Arc<Mutex<Box<dyn Status>>>, app_setting_path: String, crash_notifier: Sender<String>) {
     unsafe {
+        if fs::metadata(&dll_path).is_err() {
+            report_error(&sender_clone, &crash_notifier, name, format!("File not found: \"{dll_path}\""));
+            return;
+        }
+
+        #[cfg(windows)]
+        if !dll_path.ends_with(".dll") {
+            report_error(&sender_clone, &crash_notifier, name, format!("File is not a dynamic link library: \"{dll_path}\""));
+            return;
+        }
+        #[cfg(unix)]
+        if !dll_path.ends_with(".so") {
+            report_error(&sender_clone, &crash_notifier, name, format!("File is not a shared object: \"{dll_path}\""));
+            return;
+        }
+
+        if fs::metadata(&app_setting_path).is_err(){
+            report_error(&sender_clone, &crash_notifier, name, format!("File not found: \"{app_setting_path}\""));
+            return;
+        }
         let lib = match Library::new(dll_path) {
             Ok(value) => value,
             Err(err) => {
@@ -212,7 +235,7 @@ fn thread_logic(dll_path: &str, name: String, sender_clone: Sender<ErrorOperatio
             Ok(result) => {
                 match result {
                     Ok(_) => {
-                        print(&format!("{} has stopped gracefully\nlast status:\n", name), RGB::INFO());
+                        print(&format!("{} has stopped gracefully\nlast status:", &name), RGB::INFO());
                         printstatus(&status);
                     },
                     Err(err) => {
@@ -225,7 +248,7 @@ fn thread_logic(dll_path: &str, name: String, sender_clone: Sender<ErrorOperatio
                                 exit(ERROR_THREAD_DOWN);
                             }
                         }
-                        send_crash_notifier(&crash_notifier, name);
+                        send_crash_notifier(&crash_notifier, name.clone());
                     },
                 }
             },
@@ -234,7 +257,15 @@ fn thread_logic(dll_path: &str, name: String, sender_clone: Sender<ErrorOperatio
                     print_error("Manager", &format!("Error while sending error: {} Thread panicked unexpectedly: {:?}", name, error), RGB::CRITICAL_ERROR());
                     exit(ERROR_THREAD_DOWN);
                 }
-                send_crash_notifier(&crash_notifier, name);
+                send_crash_notifier(&crash_notifier, name.clone());
+            },
+        }
+        match status.lock() {
+            Ok(mut lock) => {
+                (*lock) = Box::new(IniStatus {});
+            },
+            Err(_) => {
+                print_error(&name, "Couldn't reset status to initial state", RGB::CRITICAL_ERROR());
             },
         }
     }

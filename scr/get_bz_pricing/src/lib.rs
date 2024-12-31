@@ -221,16 +221,16 @@ fn ensure_column_exists(conn: &Connection, table_name: &str, column_name: &str, 
 }
 
 fn get_data_from_api(error_handel: &Sender<ErrorOperation>, context: &Context)-> Result<(BzData,(usize,usize)), PricingError> {
-    let data = web_service_adapter::get_data_puls_size(&context.url, 3, Duration::from_secs(3)).map_err(|err| {
+    let data = web_service_adapter::get_data_plus_size(&context.url, 3, Duration::from_secs(3)).map_err(|err| {
         if let Err(_) = error_handel.send(ErrorOperation::Print(APP_NAME.to_string(), format!("error while fetching data from api, retrying next cycle\n{err}"), RGB::WARNING())){
             return PricingError::ErrorThreadDown(format!("error while fetching data from api, retrying next cycle\n{err}"));
         }
         PricingError::NonFatal
     });
 
-    let (data, (data_out, _data_in)) = data?;
+    let data =data?;
 
-    let json_data = BzData::from_data(data).map_err(|err|
+    let json_data = BzData::from_data(data.text).map_err(|err|
     match err {
         PricingError::JSONReadError => {
             if let Err(_) = error_handel.send(ErrorOperation::Print(APP_NAME.to_string(),"error while parsing the json, retrying next cycle".to_string(), RGB::ERROR())){
@@ -254,7 +254,7 @@ fn get_data_from_api(error_handel: &Sender<ErrorOperation>, context: &Context)->
         return Err(PricingError::NonFatal);
     }
 
-    Ok((json_data, (data_out, data_out)))
+    Ok((json_data, (data.sent_bytes, data.received_bytes)))
 }
 
 fn update_index_database(json_data: &BzData, context: &mut Context, error_handel: &Sender<ErrorOperation>) -> Result<(), PricingError> {

@@ -1,20 +1,46 @@
-use std::{io::{self, Write}, process::exit, sync::mpsc};
+use std::{env, io::{self, Write}, process::exit, sync::mpsc};
 
-use library::error_handeler::{print_error,print, RGB};
+use library::error_handeler::{print, print_error, reset_color, RGB};
 use private_lib::*;
 mod private_lib;
 mod cli;
 
+const FAILED_TO_START_THREADMANIGER:i32 = 107;
+
 fn main() {
-    //TODO custor setigns file
+    let settings_path;
+    let arg = env::args().collect::<Vec<String>>();
+    if arg.len() == 1 {
+        {
+            if env::current_dir().unwrap().ends_with("scr") {
+                settings_path = r"threadmanager\genaral_setting.toml";
+            } else {
+                settings_path = r"..\..\scr\threadmanager\genaral_setting.toml";
+            }
+        } 
+        #[cfg(not(debug_assertions))]{
+            settings_path = "";//TODO fille structere uit zoeken
+        }
+    } else {
+        settings_path = &arg[1];
+    }
+
+    //debug
+    #[cfg(debug_assertions)]{
+    print(&format!("{:?}",arg), RGB::DEBUG());
+    let current_dir = env::current_dir().unwrap();
+    print(&format!("Current working directory: {:?}", current_dir), RGB::DEBUG());
+    print(settings_path, RGB::DEBUG());
+    }
+
     print("CLI Plugin Manager", RGB::CYAN());
     let (error_tx, error_rx) = mpsc::channel();
     let (crach_tx, crach_rx) = mpsc::channel::<String>();
-    let mut open_threads = match Manager::new(error_tx, r"E:\project\hypixelPI\git\scr\threadmanager\genaral_setting.toml", crach_tx){
+    let mut open_threads = match Manager::new(error_tx, settings_path, crach_tx){
         Ok(threads) => threads,
         Err(err) => {
             print_error("main", &format!("Failed to start threadmaniger: {}", err), RGB::ERROR());
-            exit(107);
+            exit(FAILED_TO_START_THREADMANIGER);
         }
     };
     open_threads.start_error(error_rx);
@@ -46,8 +72,6 @@ fn main() {
             print("Command not found. Type 'help' for a list of commands.", RGB::WHITE());
         }
     }
+    reset_color();
+    drop(open_threads);
 }
-
-
-
-

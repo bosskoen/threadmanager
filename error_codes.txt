@@ -1,7 +1,8 @@
-100: kon niet de lock kreigen om de errorstatus the initializeren
-101: kon niet de lock kreigen om de errorstatus the updaten
-102: kon type dyn Status niet omzetten naar ErrorStatus type
-103: ErrorThread's resever channel was dropt voor dat hij de stop messige gekregen had
-104: ErrorThread paniced tijdes het afsluiten
-105: kon geen error naar error thread sturen
-106: kon main niet zeggen unexpexted crach
+100: Failed to acquire lock to initialize error status
+101: Failed to acquire lock to update error status
+102: Failed to convert dyn Status to ErrorStatus type
+103: ErrorThread's receiver channel was dropped before receiving the stop message
+104: ErrorThread panicked during shutdown
+105: Failed to send error to ErrorThread
+106: Failed to notify main of unexpected crash
+107: Failed to start ThreadManager

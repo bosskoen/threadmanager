@@ -1,11 +1,15 @@
 mod led_controller;
 
-use std::{error, io::{self, IsTerminal, Write}, process::exit, sync::{mpsc::Receiver, Arc, Mutex}, time::Duration};
+use std::{io::{self, IsTerminal, Write}, process::exit, sync::{mpsc::Receiver, Arc, Mutex}, time::Duration};
 use chrono::{DateTime, Local};
 use termcolor::{Color, ColorChoice, ColorSpec, StandardStream, WriteColor};
 use crate::{format_duration, Status};
 
 pub use led_controller::RGB;
+
+const INITIOLIZE_STATUS_ERROR:i32 = 100;
+const ERROR_STATUS_LOCK_FAILED:i32 = 101;
+const ERROR_STATUS_NOT_ERROR_STATUS:i32 = 102;
 
 lazy_static!{
     static ref VARIABLES: Mutex<Variables> = Mutex::new(Variables::new());
@@ -83,8 +87,8 @@ pub enum ErrorOperation {
     StopErr
 }
 
-pub fn error_catchloop(receiver: Receiver<ErrorOperation>, status: Arc<Mutex<Box<dyn Status>>>) -> Result<(), Box<dyn error::Error>> {
-    initialize_status(&status)?;
+pub fn error_catchloop(receiver: Receiver<ErrorOperation>, status: Arc<Mutex<Box<dyn Status>>>) {
+    initialize_status(&status);
 
     // TODO: set led to RGB::GREEN()
 
@@ -118,15 +122,13 @@ pub fn error_catchloop(receiver: Receiver<ErrorOperation>, status: Arc<Mutex<Box
             },
         }
     }
-    Ok(())
 }
 
-fn initialize_status(status: &Arc<Mutex<Box<dyn Status>>>) -> Result<(), Box<dyn error::Error>> {
+fn initialize_status(status: &Arc<Mutex<Box<dyn Status>>>) {
     *(status.lock().unwrap_or_else(|_| {
         print_error("errorThread","couldn't initialize error status", RGB::CRITICAL_ERROR());
-        exit(100) 
+        exit(INITIOLIZE_STATUS_ERROR); 
     })) = Box::new(ErrorStatus::new());
-    Ok(())
 }
 
 fn print_message(stream: &mut StandardStream, message: &str, color: RGB) {
@@ -142,6 +144,22 @@ fn print_message(stream: &mut StandardStream, message: &str, color: RGB) {
     }
     if let Err(err) = stream.set_color(ColorSpec::new().set_fg(Some(Color::Rgb(255,255,255)))) {
         eprintln!("Failed to reset stream: {}", err);
+    }
+}
+
+pub fn reset_color() {
+    let mut config = if let Ok(config) = VARIABLES.lock() {
+        config
+    } else {
+        eprintln!("couldn't lock print variables");
+        return;
+    };
+
+    if let Err(err) = config.stdout.reset(){
+        eprintln!("Failed to reset stdout: {}", err);
+    }
+    if let Err(err) = config.stderr.reset(){
+        eprintln!("Failed to reset stderr: {}", err);
     }
 }
 
@@ -217,7 +235,7 @@ pub fn print(message: &str, rgb: RGB) {
 fn update_status(status: &Arc<Mutex<Box<dyn Status>>>, new_color: ChangeColor) {
     if let Some(status) = (*status.lock().unwrap_or_else(|_| {
         print_error("errorThread","couldn't lock error status", RGB::CRITICAL_ERROR());
-        exit(101);
+        exit(ERROR_STATUS_LOCK_FAILED);
     })).as_any_mut().downcast_mut::<ErrorStatus>() {
         status.errors += 1;
         if let ChangeColor::Yes(rgb) = new_color {
@@ -225,7 +243,7 @@ fn update_status(status: &Arc<Mutex<Box<dyn Status>>>, new_color: ChangeColor) {
         }
     } else {
         print_error("errorThread","Status isn't of type ErrorStatus", RGB::CRITICAL_ERROR()); 
-        exit(102);
+        exit(ERROR_STATUS_NOT_ERROR_STATUS);
     }
 }
 
