@@ -74,7 +74,7 @@ impl Manager {
                 Err(ManagerError::AppDoesntExist(name))
             }
         }
-    }
+    } //TOOD stop error thread is een loop
 
     pub fn is_running(&self, name: &str) -> bool {
         self.map.contains_key(name)
