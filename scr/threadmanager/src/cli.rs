@@ -127,4 +127,4 @@ fn help(args: &[&str], open_threads: &mut Manager){
     }
 }
 
-//TODO update logic, reload settings
+//TODO update logic, reload settings, LED control

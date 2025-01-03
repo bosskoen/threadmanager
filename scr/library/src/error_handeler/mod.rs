@@ -1,11 +1,14 @@
+#[cfg(feature = "led")]
 mod led_controller;
+
+mod rgb;
 
 use std::{io::{self, IsTerminal, Write}, process::exit, sync::{mpsc::Receiver, Arc, Mutex}, time::Duration};
 use chrono::{DateTime, Local};
 use termcolor::{Color, ColorChoice, ColorSpec, StandardStream, WriteColor};
 use crate::{format_duration, Status};
 
-pub use led_controller::RGB;
+pub use rgb::RGB;
 
 const INITIOLIZE_STATUS_ERROR:i32 = 100;
 const ERROR_STATUS_LOCK_FAILED:i32 = 101;
