@@ -11,6 +11,7 @@ fn main() {
     let settings_path;
     let arg = env::args().collect::<Vec<String>>();
     if arg.len() == 1 {
+        #[cfg(debug_assertions)]
         {
             if env::current_dir().unwrap().ends_with("scr") {
                 settings_path = r"threadmanager\genaral_setting.toml";
@@ -72,6 +73,8 @@ fn main() {
             print("Command not found. Type 'help' for a list of commands.", RGB::WHITE());
         }
     }
-    reset_color();
     drop(open_threads);
 }
+
+
+//TODO led changer ldd

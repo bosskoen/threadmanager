@@ -1,9 +1,11 @@
 #[cfg(feature = "led")]
 mod led_controller;
+#[cfg(feature = "led")]
+use led_controller;
 
 mod rgb;
 
-use std::{io::{self, IsTerminal, Write}, process::exit, sync::{mpsc::Receiver, Arc, Mutex}, time::Duration};
+use std::{io::{self, IsTerminal, Write}, process::exit, sync::{mpsc::Receiver, Arc, Mutex}};
 use chrono::{DateTime, Local};
 use termcolor::{Color, ColorChoice, ColorSpec, StandardStream, WriteColor};
 use crate::{format_duration, Status};
@@ -83,17 +85,42 @@ impl ErrorStatus {
 pub enum ErrorOperation {
     Print(String, String, RGB),
     ChangeLed(RGB),
-    BlinkLed(RGB, Duration),
     PrintAndChangeLed(String, String, RGB, RGB),
-    PrintAndBlinkLed(String, String, RGB, RGB, Duration),
     NonErrorPrint(String, String, RGB),
+    CangeBrighness(u8),
+    ///reset to color to use the pwm signal to be dimed again, undoes the OnColor and OffColor functions
+    RestColor(LedOption),
+    ///set the color to not folow the pwm signal and will turn full off
+    OffColor(LedOption),
+    /// set the color to not folow the pwm signal and will turn full on
+    OnColor(LedOption),
+    PWM(PWMOption),
     StopErr
+}
+
+pub enum LedOption {
+    Red,
+    Green,
+    Blue,
+    All
+}
+pub enum PWMOption {
+    On,
+    Off
 }
 
 pub fn error_catchloop(receiver: Receiver<ErrorOperation>, status: Arc<Mutex<Box<dyn Status>>>) {
     initialize_status(&status);
 
-    // TODO: set led to RGB::GREEN()
+    #[cfg(feature = "led")]
+    let led_controler = {
+        let now = Local::now();
+        if now.hour() >= 22 || now.hour() < 8 {
+            led_controller::LedController::new(RGB::GREEN(), 5)
+        } else {
+            led_controller::LedController::new(RGB::GREEN(), 14)
+        }
+    };
 
     for error in receiver.iter() {
         match error {
@@ -102,26 +129,70 @@ pub fn error_catchloop(receiver: Receiver<ErrorOperation>, status: Arc<Mutex<Box
                 update_status(&status, ChangeColor::No);
             },
             ErrorOperation::ChangeLed(rgb) => {
-                // TODO: change led
-                update_status(&status, ChangeColor::Yes(rgb));
-            },
-            ErrorOperation::BlinkLed(rgb, _) => {
-                // TODO: blink led
+                #[cfg(feature = "led")]
+                led_controler.cange_led(rgb);
                 update_status(&status, ChangeColor::Yes(rgb));
             },
             ErrorOperation::PrintAndChangeLed(plugin, message, color, rgb) => {
-                // TODO: change led
-                print_error(&plugin, &message, color);
-                update_status(&status, ChangeColor::Yes(rgb));
-            },
-            ErrorOperation::PrintAndBlinkLed(plugin, message, color, rgb, time) => {
-                // TODO: blink led
+                #[cfg(feature = "led")]
+                led_controler.set_color(rgb);
                 print_error(&plugin, &message, color);
                 update_status(&status, ChangeColor::Yes(rgb));
             },
             ErrorOperation::StopErr => break,
             ErrorOperation::NonErrorPrint(plugin, message, rgb) => {
                 print_interup(&plugin, &message, rgb);
+            },
+            ErrorOperation::CangeBrighness(_new_brightness) => {
+                #[cfg(feature = "led")]
+                led_controler.set_brightness(_new_brightness);
+            },
+            ErrorOperation::RestColor(_led_option) => {
+                #[cfg(feature = "led")]
+                match _led_option {
+                    LedOption::Red => led_controler.red_reset(),
+                    LedOption::Green => led_controler.green_reset(),
+                    LedOption::Blue => led_controler.blue_reset(),
+                    LedOption::All => {
+                        led_controler.red_reset();
+                        led_controler.green_reset();
+                        led_controler.blue_reset();
+                    },
+                }
+            },
+            ErrorOperation::OffColor(_led_option) => {
+                #[cfg(feature = "led")]
+                match _led_option {
+                    LedOption::Red => led_controler.red_off(),
+                    LedOption::Green => led_controler.green_off(),
+                    LedOption::Blue => led_controler.blue_off(),
+                    LedOption::All => {
+                        led_controler.red_off();
+                        led_controler.green_off();
+                        led_controler.blue_off();
+                    },
+                }
+            },
+            ErrorOperation::OnColor(_led_option) => {
+                #[cfg(feature = "led")]
+                match _led_option {
+                    LedOption::Red => led_controler.red_on(),
+                    LedOption::Green => led_controler.green_on(),
+                    LedOption::Blue => led_controler.blue_on(),
+                    LedOption::All => {
+                        led_controler.red_on();
+                        led_controler.green_on();
+                        led_controler.blue_on();
+                    },
+                };
+            },
+            ErrorOperation::PWM(_pwmoption) => {
+                #[cfg(feature = "led")]
+                if let PWMOption::Off = _pwmoption{
+                    led_controlor.off();
+                }else{
+                    led_controlor.on();
+                }
             },
         }
     }

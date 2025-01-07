@@ -16,11 +16,20 @@ mod led {
     const GAMMA: f32 = 2.2;
     
 
-    struct LedController {
+    pub struct LedController {
         pin: rppal::gpio::OutputPin,
         control: rppal::i2c::I2c,
         color: RGB,
         brightness: u8,
+    }
+
+    impl Drop for LedController{
+        fn drop(&mut self) {
+            self.set_color(RGB::BLACK());
+            self.red_reset();
+            self.green_reset();
+            self.blue_reset();
+        }
     }
 
     impl LedController {

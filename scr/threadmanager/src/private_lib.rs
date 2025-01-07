@@ -1,5 +1,5 @@
 use libloading::{Library, Symbol};
-use library::{error_handeler::{error_catchloop, print_error,print, ErrorOperation, RGB}, impl_status, toml, ErrorThreadDownError, Status};
+use library::{error_handeler::{error_catchloop, print, print_error, reset_color, ErrorOperation, LedOption, RGB}, impl_status, toml, ErrorThreadDownError, Status};
 use std::{collections::HashMap, error::Error, fmt, fs, panic, process::exit, sync::{atomic::AtomicBool, mpsc::{Receiver, Sender}, Arc, Mutex}, thread::{self, JoinHandle}, time::Duration};
 use serde::Deserialize;
 
@@ -13,8 +13,9 @@ const ERROR_PENICED:i32 = 104;
 
 pub struct Manager {
     map: HashMap<String, ThreadHandel>,
-    error_sender: Sender<ErrorOperation>,
+    pub error_sender: Sender<ErrorOperation>,
     settings: Settings,
+    settings_path: String,
     crash_notifier: Sender<String>,
 }
 
@@ -22,13 +23,14 @@ impl Drop for Manager {
     fn drop(&mut self) {
         self.stop_all_threads();
         self.stop_error();
+        reset_color();
     }
 }
 
 impl Manager {
     pub fn new(error_sender: Sender<ErrorOperation>, settings_path: &str, crash_notifier: Sender<String>) -> Result<Self, ManagerError> {
         let settings = Settings::deserialize(settings_path)?;
-        Ok(Self { map: HashMap::new(), error_sender, settings, crash_notifier })
+        Ok(Self { map: HashMap::new(), error_sender, settings, crash_notifier, settings_path: settings_path.to_string() })
     }
 
     pub fn start_new_thread(&mut self, name: String) -> Result<(), ManagerError> {
@@ -164,6 +166,16 @@ impl Manager {
         }
         Ok(())
     }
+
+    pub fn reload_settings(&mut self){
+        self.settings = match Settings::deserialize(&self.settings_path) {
+            Ok(setting) => setting,
+            Err(_) => {
+                print("failed to get new settings", RGB::ERROR());
+                return;
+            },
+        }
+    }
 }
 
 pub enum Mode {
@@ -253,7 +265,11 @@ fn thread_logic(dll_path: &str, name: String, sender_clone: Sender<ErrorOperatio
                 }
             },
             Err(error) => {
-                if let Err(_) = sender.send(ErrorOperation::PrintAndBlinkLed(name.clone(), format!("Thread panicked unexpectedly: {:?}", error), RGB::CRITICAL_ERROR(), RGB::RED(), Duration::from_millis(500))) {
+                if let Err(_) = sender.send(ErrorOperation::PrintAndChangeLed(name.clone(), format!("Thread panicked unexpectedly: {:?}", error), RGB::CRITICAL_ERROR(), RGB::RED())) {
+                    print_error("Manager", &format!("Error while sending error: {} Thread panicked unexpectedly: {:?}", name, error), RGB::CRITICAL_ERROR());
+                    exit(ERROR_THREAD_DOWN);
+                }
+                if let Err(_) = sender.send(ErrorOperation::OnColor(LedOption::Red)) {
                     print_error("Manager", &format!("Error while sending error: {} Thread panicked unexpectedly: {:?}", name, error), RGB::CRITICAL_ERROR());
                     exit(ERROR_THREAD_DOWN);
                 }

@@ -1,6 +1,6 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, process::exit};
 
-use library::error_handeler::{print, RGB};
+use library::error_handeler::{print, print_error, ErrorOperation, LedOption, RGB};
 use crate::{private_lib::Manager, Mode};
 
 pub fn initialise_cli() -> HashMap<&'static str, Box<dyn Fn(&[&str], &mut Manager)>>{
@@ -10,6 +10,7 @@ pub fn initialise_cli() -> HashMap<&'static str, Box<dyn Fn(&[&str], &mut Manage
     cli.insert("status", Box::new(get_status) as Box<dyn Fn(&[&str], &mut Manager)>);
     cli.insert("list", Box::new(list_apps) as Box<dyn Fn(&[&str], &mut Manager)>);
     cli.insert("help", Box::new(help) as Box<dyn Fn(&[&str], &mut Manager)>);
+    cli.insert("setting", Box::new(settings) as Box<dyn Fn(&[&str], &mut Manager)>);
 
     cli
 }
@@ -127,4 +128,106 @@ fn help(args: &[&str], open_threads: &mut Manager){
     }
 }
 
-//TODO update logic, reload settings, LED control
+fn settings(args: &[&str], open_threads: &mut Manager) {
+    if args.len() == 0 {
+        print("No argument provided. Please specify 'reload'.", RGB::WHITE());
+        return;
+    } else if args.len() > 1 {
+        print("Invalid argument. Please specify only 'reload'.", RGB::WHITE());
+        return;
+    }
+
+    match args[0] {
+        "reload" =>  open_threads.reload_settings(),
+        _ => print("Invalid argument. Please specify 'reload'.", RGB::WHITE()),
+    }
+}
+
+fn led(args: &[&str], open_threads: &mut Manager){
+    if args.len() == 0 {
+        print("No argument provided. Please specify 'reload'.", RGB::WHITE());
+        return;
+    } else if args.len() > 2 {
+        print("Invalid argument. Please specify only 'reload'.", RGB::WHITE());
+        return;
+    }
+    match args[0] {
+        "off" => {
+            if args.len() == 2{
+                let oper;
+                match args[1] {
+                    "red" => oper = LedOption::Red,
+                    "green" => oper = LedOption::Green,
+                    "blue" => oper = LedOption::Blue,
+                    "all" => oper = LedOption::All,
+                    _ => {print("", RGB::WHITE());
+                        return;},
+                }
+                if let Err(_) = open_threads.error_sender.send(ErrorOperation::OffColor(oper)){
+                    print_error("main", "failed to send led command", RGB::CRITICAL_ERROR());
+                }
+            } else{
+                if let Err(_) = open_threads.error_sender.send(ErrorOperation::OffColor(LedOption::All)){
+                    print_error("main", "failed to send led command", RGB::CRITICAL_ERROR());
+                }
+            }
+        },
+        "on" => {
+            if args.len() == 2{
+                let oper;
+                match args[1] {
+                    "red" => oper = LedOption::Red,
+                    "green" => oper = LedOption::Green,
+                    "blue" => oper = LedOption::Blue,
+                    "all" => oper = LedOption::All,
+                    _ => {print("", RGB::WHITE());
+                        return;},
+                }
+                if let Err(_) = open_threads.error_sender.send(ErrorOperation::OnColor(oper)){
+                    print_error("main", "failed to send led command", RGB::CRITICAL_ERROR());
+                }
+            } else{
+                if let Err(_) = open_threads.error_sender.send(ErrorOperation::OnColor(LedOption::All)){
+                    print_error("main", "failed to send led command", RGB::CRITICAL_ERROR());
+                }
+            }
+        },
+        "reset" => {
+            if args.len() == 2{
+                let oper;
+                match args[1] {
+                    "red" => oper = LedOption::Red,
+                    "green" => oper = LedOption::Green,
+                    "blue" => oper = LedOption::Blue,
+                    "all" => oper = LedOption::All,
+                    _ => {print("", RGB::WHITE());
+                        return;},
+                }
+                if let Err(_) = open_threads.error_sender.send(ErrorOperation::RestColor(oper)){
+                    print_error("main", "failed to send led command", RGB::CRITICAL_ERROR());
+                }
+            } else{
+                if let Err(_) = open_threads.error_sender.send(ErrorOperation::RestColor(LedOption::All)){
+                    print_error("main", "failed to send led command", RGB::CRITICAL_ERROR());
+                }
+            }
+        },
+        "color" => {
+            if args.len() == 2{
+                // set color
+            } else{
+                // errror
+            }
+        },
+        "brightness" => {
+            if args.len() == 2{
+                // set brightness
+            } else{
+                // errror
+            }
+        },
+        _ => print("Invalid argument. Please specify only 'reload'.", RGB::WHITE()),
+    }
+}
+
+//TODO update logic, LED control
