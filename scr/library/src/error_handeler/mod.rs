@@ -12,6 +12,9 @@ use crate::{format_duration, Status};
 
 pub use rgb::RGB;
 
+pub const LED_NIGHT_BRIGHTNESS:u8 = 5;
+pub const LED_DAY_BRIGHTNESS: u8 = 14;
+
 const INITIOLIZE_STATUS_ERROR:i32 = 100;
 const ERROR_STATUS_LOCK_FAILED:i32 = 101;
 const ERROR_STATUS_NOT_ERROR_STATUS:i32 = 102;
@@ -116,9 +119,9 @@ pub fn error_catchloop(receiver: Receiver<ErrorOperation>, status: Arc<Mutex<Box
     let led_controler = {
         let now = Local::now();
         if now.hour() >= 22 || now.hour() < 8 {
-            led_controller::LedController::new(RGB::GREEN(), 5)
+            led_controller::LedController::new([RGB::GREEN(), RGB::BLACK(), RGB::BLACK(), RGB::BLACK(), RGB::BLACK()], [LED_NIGHT_BRIGHTNESS; 5])
         } else {
-            led_controller::LedController::new(RGB::GREEN(), 14)
+            led_controller::LedController::new([RGB::GREEN(), RGB::BLACK(), RGB::BLACK(), RGB::BLACK(), RGB::BLACK()], [LED_DAY_BRIGHTNESS; 5])
         }
     };
 
@@ -130,12 +133,12 @@ pub fn error_catchloop(receiver: Receiver<ErrorOperation>, status: Arc<Mutex<Box
             },
             ErrorOperation::ChangeLed(rgb) => {
                 #[cfg(feature = "led")]
-                led_controler.cange_led(rgb);
+                led_controler.cange_led(rgb, 0);
                 update_status(&status, ChangeColor::Yes(rgb));
             },
             ErrorOperation::PrintAndChangeLed(plugin, message, color, rgb) => {
                 #[cfg(feature = "led")]
-                led_controler.set_color(rgb);
+                led_controler.set_color(rgb, 0);
                 print_error(&plugin, &message, color);
                 update_status(&status, ChangeColor::Yes(rgb));
             },
@@ -145,44 +148,44 @@ pub fn error_catchloop(receiver: Receiver<ErrorOperation>, status: Arc<Mutex<Box
             },
             ErrorOperation::CangeBrighness(_new_brightness) => {
                 #[cfg(feature = "led")]
-                led_controler.set_brightness(_new_brightness);
+                led_controler.set_brightness(_new_brightness,0);
             },
             ErrorOperation::RestColor(_led_option) => {
                 #[cfg(feature = "led")]
                 match _led_option {
-                    LedOption::Red => led_controler.red_reset(),
-                    LedOption::Green => led_controler.green_reset(),
-                    LedOption::Blue => led_controler.blue_reset(),
+                    LedOption::Red => led_controler.red_reset(0),
+                    LedOption::Green => led_controler.green_reset(0),
+                    LedOption::Blue => led_controler.blue_reset(0),
                     LedOption::All => {
-                        led_controler.red_reset();
-                        led_controler.green_reset();
-                        led_controler.blue_reset();
+                        led_controler.red_reset(0);
+                        led_controler.green_reset(0);
+                        led_controler.blue_reset(0);
                     },
                 }
             },
             ErrorOperation::OffColor(_led_option) => {
                 #[cfg(feature = "led")]
                 match _led_option {
-                    LedOption::Red => led_controler.red_off(),
-                    LedOption::Green => led_controler.green_off(),
-                    LedOption::Blue => led_controler.blue_off(),
+                    LedOption::Red => led_controler.red_off(0),
+                    LedOption::Green => led_controler.green_off(0),
+                    LedOption::Blue => led_controler.blue_off(0),
                     LedOption::All => {
-                        led_controler.red_off();
-                        led_controler.green_off();
-                        led_controler.blue_off();
+                        led_controler.red_off(0);
+                        led_controler.green_off(0);
+                        led_controler.blue_off(0);
                     },
                 }
             },
             ErrorOperation::OnColor(_led_option) => {
                 #[cfg(feature = "led")]
                 match _led_option {
-                    LedOption::Red => led_controler.red_on(),
-                    LedOption::Green => led_controler.green_on(),
-                    LedOption::Blue => led_controler.blue_on(),
+                    LedOption::Red => led_controler.red_on(0),
+                    LedOption::Green => led_controler.green_on(0),
+                    LedOption::Blue => led_controler.blue_on(0),
                     LedOption::All => {
-                        led_controler.red_on();
-                        led_controler.green_on();
-                        led_controler.blue_on();
+                        led_controler.red_on(0);
+                        led_controler.green_on(0);
+                        led_controler.blue_on(0);
                     },
                 };
             },

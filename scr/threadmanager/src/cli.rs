@@ -1,4 +1,4 @@
-use std::{collections::HashMap, process::exit};
+use std::collections::HashMap;
 
 use library::error_handeler::{print, print_error, ErrorOperation, LedOption, RGB};
 use crate::{private_lib::Manager, Mode};
@@ -221,7 +221,12 @@ fn led(args: &[&str], open_threads: &mut Manager){
         },
         "brightness" => {
             if args.len() == 2{
-                // set brightness
+                let new_level;
+                match args[1].parse::<u8>() {
+                    Ok(value) => new_level = value,
+                    Err(_) => {print("invalit input, it needs to be a number", RGB::WHITE()); return;},
+                }
+                //TODO set level
             } else{
                 // errror
             }
