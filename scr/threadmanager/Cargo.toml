@@ -3,6 +3,10 @@ name = "threadmanager"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = []
+led = []
+
 [dependencies]
 library = {path = "../library"}
 serde = {version = "1.0.216", features = ["derive"]}

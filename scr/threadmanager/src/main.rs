@@ -1,6 +1,6 @@
 use std::{env, io::{self, Write}, process::exit, sync::mpsc};
 
-use library::error_handeler::{print, print_error, reset_color, RGB};
+use library::error_handeler::{print, print_error, RGB};
 use private_lib::*;
 mod private_lib;
 mod cli;
@@ -13,11 +13,19 @@ fn main() {
     if arg.len() == 1 {
         #[cfg(debug_assertions)]
         {
+            #[cfg(windows)]{
             if env::current_dir().unwrap().ends_with("scr") {
                 settings_path = r"threadmanager\genaral_setting.toml";
             } else {
+              
                 settings_path = r"..\..\scr\threadmanager\genaral_setting.toml";
-            }
+            }}
+            #[cfg(unix)]{
+            if env::current_dir().unwrap().ends_with("scr") {
+                settings_path = r"threadmanager/genaral_setting.toml";
+            } else {
+                settings_path = r"../../scr/threadmanager/genaral_setting.toml";
+            }}
         } 
         #[cfg(not(debug_assertions))]{
             settings_path = "";//TODO fille structere uit zoeken

@@ -1,9 +1,14 @@
 #[cfg(feature = "led")]
 mod led_controller;
 #[cfg(feature = "led")]
-use led_controller;
+use led_controller::LedNumber::LED1;
+#[cfg(feature = "led")]
+use chrono::Timelike;
+
 
 mod rgb;
+
+pub mod light_dimmer_thread;
 
 use std::{io::{self, IsTerminal, Write}, process::exit, sync::{mpsc::Receiver, Arc, Mutex}};
 use chrono::{DateTime, Local};
@@ -14,6 +19,9 @@ pub use rgb::RGB;
 
 pub const LED_NIGHT_BRIGHTNESS:u8 = 5;
 pub const LED_DAY_BRIGHTNESS: u8 = 14;
+
+pub const TIME_TO_BRIGHTEN: u32 = 7; // in hours
+pub const TIME_TO_DIM: u32= 21; // in hours
 
 const INITIOLIZE_STATUS_ERROR:i32 = 100;
 const ERROR_STATUS_LOCK_FAILED:i32 = 101;
@@ -85,9 +93,21 @@ impl ErrorStatus {
     }
 }
 
+pub enum LedOption {
+    Red,
+    Green,
+    Blue,
+    All
+}
+pub enum PWMOption {
+    On,
+    Off
+}
+
+
 pub enum ErrorOperation {
     Print(String, String, RGB),
-    ChangeLed(RGB),
+    ChangeLed(RGB, bool),
     PrintAndChangeLed(String, String, RGB, RGB),
     NonErrorPrint(String, String, RGB),
     CangeBrighness(u8),
@@ -101,46 +121,56 @@ pub enum ErrorOperation {
     StopErr
 }
 
-pub enum LedOption {
-    Red,
-    Green,
-    Blue,
-    All
-}
-pub enum PWMOption {
-    On,
-    Off
-}
 
 pub fn error_catchloop(receiver: Receiver<ErrorOperation>, status: Arc<Mutex<Box<dyn Status>>>) {
     initialize_status(&status);
 
     #[cfg(feature = "led")]
-    let led_controler = {
+    let mut led_controler = {
         let now = Local::now();
-        if now.hour() >= 22 || now.hour() < 8 {
-            led_controller::LedController::new([RGB::GREEN(), RGB::BLACK(), RGB::BLACK(), RGB::BLACK(), RGB::BLACK()], [LED_NIGHT_BRIGHTNESS; 5])
+        if now.hour() >= TIME_TO_DIM || now.hour() < TIME_TO_BRIGHTEN {
+            led_controller::led::LedController::new([RGB::GREEN(), RGB::BLACK(), RGB::BLACK(), RGB::BLACK(), RGB::BLACK()], [LED_NIGHT_BRIGHTNESS; 5])
         } else {
-            led_controller::LedController::new([RGB::GREEN(), RGB::BLACK(), RGB::BLACK(), RGB::BLACK(), RGB::BLACK()], [LED_DAY_BRIGHTNESS; 5])
+            led_controller::led::LedController::new([RGB::GREEN(), RGB::BLACK(), RGB::BLACK(), RGB::BLACK(), RGB::BLACK()], [LED_DAY_BRIGHTNESS; 5])
         }
-    };
+    }.unwrap_or_else(|err| {
+        print_error("errorThread",&format!("couldn't initialize led controler: \n {}", err), RGB::CRITICAL_ERROR());
+        led_controller::led::LedController::dummy()
+    });
 
     for error in receiver.iter() {
         match error {
             ErrorOperation::Print(plugin, message, color) => {
                 print_error(&plugin, &message, color);
-                update_status(&status, ChangeColor::No);
+                update_status_error(&status, ChangeColor::No);
             },
-            ErrorOperation::ChangeLed(rgb) => {
+            ErrorOperation::ChangeLed(rgb, is_error) => {
                 #[cfg(feature = "led")]
-                led_controler.cange_led(rgb, 0);
-                update_status(&status, ChangeColor::Yes(rgb));
+                led_controler.set_color(rgb, LED1).unwrap_or_else(|err| {
+                    print_error(
+                        "errorThread",
+                        &format!("Failed to change LED color to {:?}: {}", rgb, err),
+                        RGB::CRITICAL_ERROR(),
+                    );
+                    ()
+                });
+                update_status(&status, ChangeColor::Yes(rgb), is_error);
             },
             ErrorOperation::PrintAndChangeLed(plugin, message, color, rgb) => {
                 #[cfg(feature = "led")]
-                led_controler.set_color(rgb, 0);
+                led_controler.set_color(rgb, LED1).unwrap_or_else(|err| {
+                    print_error(
+                        "errorThread",
+                        &format!(
+                            "Plugin '{}' failed to change LED color to {:?}: {}",
+                            plugin, rgb, err
+                        ),
+                        RGB::CRITICAL_ERROR(),
+                    );
+                    ()
+                });
                 print_error(&plugin, &message, color);
-                update_status(&status, ChangeColor::Yes(rgb));
+                update_status_error(&status, ChangeColor::Yes(rgb));
             },
             ErrorOperation::StopErr => break,
             ErrorOperation::NonErrorPrint(plugin, message, rgb) => {
@@ -148,53 +178,117 @@ pub fn error_catchloop(receiver: Receiver<ErrorOperation>, status: Arc<Mutex<Box
             },
             ErrorOperation::CangeBrighness(_new_brightness) => {
                 #[cfg(feature = "led")]
-                led_controler.set_brightness(_new_brightness,0);
+                led_controler.set_brightness(_new_brightness, LED1).unwrap_or_else(|err| {
+                    print_error(
+                        "errorThread",
+                        &format!(
+                            "Failed to set LED brightness to {}: {}",
+                            _new_brightness, err
+                        ),
+                        RGB::CRITICAL_ERROR(),
+                    );
+                    ()
+                });
             },
             ErrorOperation::RestColor(_led_option) => {
                 #[cfg(feature = "led")]
                 match _led_option {
-                    LedOption::Red => led_controler.red_reset(0),
-                    LedOption::Green => led_controler.green_reset(0),
-                    LedOption::Blue => led_controler.blue_reset(0),
+                    LedOption::Red => {
+                        led_controler.red_reset(LED1).unwrap_or_else(|err| {
+                            print_error("errorThread", &format!("Failed to reset RED LED color: {}", err), RGB::CRITICAL_ERROR());
+                        });
+                    },
+                    LedOption::Green => {
+                        led_controler.green_reset(LED1).unwrap_or_else(|err| {
+                            print_error("errorThread", &format!("Failed to reset GREEN LED color: {}", err), RGB::CRITICAL_ERROR());
+                        });
+                    },
+                    LedOption::Blue => {
+                        led_controler.blue_reset(LED1).unwrap_or_else(|err| {
+                            print_error("errorThread", &format!("Failed to reset BLUE LED color: {}", err), RGB::CRITICAL_ERROR());
+                        });
+                    },
                     LedOption::All => {
-                        led_controler.red_reset(0);
-                        led_controler.green_reset(0);
-                        led_controler.blue_reset(0);
+                        led_controler.red_reset(LED1).unwrap_or_else(|err| {
+                            print_error("errorThread", &format!("Failed to reset RED LED color (All Reset): {}", err), RGB::CRITICAL_ERROR());
+                        });
+                        led_controler.green_reset(LED1).unwrap_or_else(|err| {
+                            print_error("errorThread", &format!("Failed to reset GREEN LED color (All Reset): {}", err), RGB::CRITICAL_ERROR());
+                        });
+                        led_controler.blue_reset(LED1).unwrap_or_else(|err| {
+                            print_error("errorThread", &format!("Failed to reset BLUE LED color (All Reset): {}", err), RGB::CRITICAL_ERROR());
+                        });
                     },
                 }
             },
             ErrorOperation::OffColor(_led_option) => {
                 #[cfg(feature = "led")]
                 match _led_option {
-                    LedOption::Red => led_controler.red_off(0),
-                    LedOption::Green => led_controler.green_off(0),
-                    LedOption::Blue => led_controler.blue_off(0),
+                    LedOption::Red => {
+                        led_controler.red_off(LED1).unwrap_or_else(|err| {
+                            print_error("errorThread", &format!("Failed to turn OFF RED LED: {}", err), RGB::CRITICAL_ERROR());
+                        });
+                    },
+                    LedOption::Green => {
+                        led_controler.green_off(LED1).unwrap_or_else(|err| {
+                            print_error("errorThread", &format!("Failed to turn OFF GREEN LED: {}", err), RGB::CRITICAL_ERROR());
+                        });
+                    },
+                    LedOption::Blue => {
+                        led_controler.blue_off(LED1).unwrap_or_else(|err| {
+                            print_error("errorThread", &format!("Failed to turn OFF BLUE LED: {}", err), RGB::CRITICAL_ERROR());
+                        });
+                    },
                     LedOption::All => {
-                        led_controler.red_off(0);
-                        led_controler.green_off(0);
-                        led_controler.blue_off(0);
+                        led_controler.red_off(LED1).unwrap_or_else(|err| {
+                            print_error("errorThread", &format!("Failed to turn OFF RED LED (All Off): {}", err), RGB::CRITICAL_ERROR());
+                        });
+                        led_controler.green_off(LED1).unwrap_or_else(|err| {
+                            print_error("errorThread", &format!("Failed to turn OFF GREEN LED (All Off): {}", err), RGB::CRITICAL_ERROR());
+                        });
+                        led_controler.blue_off(LED1).unwrap_or_else(|err| {
+                            print_error("errorThread", &format!("Failed to turn OFF BLUE LED (All Off): {}", err), RGB::CRITICAL_ERROR());
+                        });
                     },
                 }
             },
             ErrorOperation::OnColor(_led_option) => {
                 #[cfg(feature = "led")]
                 match _led_option {
-                    LedOption::Red => led_controler.red_on(0),
-                    LedOption::Green => led_controler.green_on(0),
-                    LedOption::Blue => led_controler.blue_on(0),
+                    LedOption::Red => {
+                        led_controler.red_on(LED1).unwrap_or_else(|err| {
+                            print_error("errorThread", &format!("Failed to turn ON RED LED: {}", err), RGB::CRITICAL_ERROR());
+                        });
+                    },
+                    LedOption::Green => {
+                        led_controler.green_on(LED1).unwrap_or_else(|err| {
+                            print_error("errorThread", &format!("Failed to turn ON GREEN LED: {}", err), RGB::CRITICAL_ERROR());
+                        });
+                    },
+                    LedOption::Blue => {
+                        led_controler.blue_on(LED1).unwrap_or_else(|err| {
+                            print_error("errorThread", &format!("Failed to turn ON BLUE LED: {}", err), RGB::CRITICAL_ERROR());
+                        });
+                    },
                     LedOption::All => {
-                        led_controler.red_on(0);
-                        led_controler.green_on(0);
-                        led_controler.blue_on(0);
+                        led_controler.red_on(LED1).unwrap_or_else(|err| {
+                            print_error("errorThread", &format!("Failed to turn ON RED LED (All On): {}", err), RGB::CRITICAL_ERROR());
+                        });
+                        led_controler.green_on(LED1).unwrap_or_else(|err| {
+                            print_error("errorThread", &format!("Failed to turn ON GREEN LED (All On): {}", err), RGB::CRITICAL_ERROR());
+                        });
+                        led_controler.blue_on(LED1).unwrap_or_else(|err| {
+                            print_error("errorThread", &format!("Failed to turn ON BLUE LED (All On): {}", err), RGB::CRITICAL_ERROR());
+                        });
                     },
                 };
             },
             ErrorOperation::PWM(_pwmoption) => {
                 #[cfg(feature = "led")]
                 if let PWMOption::Off = _pwmoption{
-                    led_controlor.off();
+                    led_controler.off();
                 }else{
-                    led_controlor.on();
+                    led_controler.on();
                 }
             },
         }
@@ -309,12 +403,14 @@ pub fn print(message: &str, rgb: RGB) {
     }
 }
 
-fn update_status(status: &Arc<Mutex<Box<dyn Status>>>, new_color: ChangeColor) {
+fn update_status(status: &Arc<Mutex<Box<dyn Status>>>, new_color: ChangeColor, is_error: bool) {
     if let Some(status) = (*status.lock().unwrap_or_else(|_| {
         print_error("errorThread","couldn't lock error status", RGB::CRITICAL_ERROR());
         exit(ERROR_STATUS_LOCK_FAILED);
     })).as_any_mut().downcast_mut::<ErrorStatus>() {
+        if is_error{
         status.errors += 1;
+        }
         if let ChangeColor::Yes(rgb) = new_color {
             status.color = rgb;
         }
@@ -324,14 +420,37 @@ fn update_status(status: &Arc<Mutex<Box<dyn Status>>>, new_color: ChangeColor) {
     }
 }
 
+fn update_status_error(status: &Arc<Mutex<Box<dyn Status>>>, new_color: ChangeColor){
+    update_status(status, new_color, true);
+}
+
 #[cfg(unix)]
 fn stdout_is_same_as_stderr() -> bool {
-    use std::os::unix::io::{AsRawFd, RawFd};
+    use std::os::unix::io::AsRawFd;
+    use std::mem::MaybeUninit;
     use std::io::{stdout, stderr};
+    use libc::{fstat, stat};
 
-    let stdout_fd: RawFd = stdout().as_raw_fd();
-    let stderr_fd: RawFd = stderr().as_raw_fd();
-    stdout_fd == stderr_fd
+    unsafe {
+        let mut stat_out = MaybeUninit::<stat>::uninit();
+        let mut stat_err = MaybeUninit::<stat>::uninit();
+
+        let stdout_fd = stdout().as_raw_fd();
+        let stderr_fd = stderr().as_raw_fd();
+
+        if fstat(stdout_fd, stat_out.as_mut_ptr()) != 0 {
+            return false;
+        }
+        if fstat(stderr_fd, stat_err.as_mut_ptr()) != 0 {
+            return false;
+        }
+
+        let stat_out = stat_out.assume_init();
+        let stat_err = stat_err.assume_init();
+
+        // Compare device and inode
+        stat_out.st_dev == stat_err.st_dev && stat_out.st_ino == stat_err.st_ino
+    }
 }
 
 #[cfg(windows)]

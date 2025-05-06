@@ -1,6 +1,6 @@
 use libloading::{Library, Symbol};
-use library::{error_handeler::{error_catchloop, print, print_error, reset_color, ErrorOperation, LedOption, RGB}, impl_status, toml, ErrorThreadDownError, Status};
-use std::{collections::HashMap, error::Error, fmt, fs, panic, process::exit, sync::{atomic::AtomicBool, mpsc::{Receiver, Sender}, Arc, Mutex}, thread::{self, JoinHandle}, time::Duration};
+use library::{error_handeler::{self, error_catchloop, print, print_error, reset_color, ErrorOperation, LedOption, RGB}, impl_status, toml, ErrorThreadDownError, Status};
+use std::{collections::HashMap, error::Error, fmt, fs, panic, process::exit, sync::{atomic::AtomicBool, mpsc::{Receiver, Sender}, Arc, Mutex}, thread::{self, JoinHandle}};
 use serde::Deserialize;
 
 pub struct IniStatus{}
@@ -84,7 +84,7 @@ impl Manager {
 
     pub fn stop_all_threads(&mut self) {
         for (name, handle) in self.map.drain() {
-            if name == "errorThread" {
+            if name == "errorThread" || name == error_handeler::light_dimmer_thread::PLUGIN_NAME {
                 continue;
             }
             print(&format!("stopping: {name}"), RGB::NOTICE());
@@ -110,13 +110,14 @@ impl Manager {
             Mode::All => "running and stopped",
             Mode::Running => "running",
             Mode::Stopped => "stopped",
-        }), RGB::WHITE());
+        }), RGB::NOTICE());
         match mode {
             Mode::All => {
                 for (_, setting) in self.settings.apps.iter() {
                     print(&setting.name, RGB::WHITE());
                 }
                 print("errorThread", RGB::TRACE());
+                print(error_handeler::light_dimmer_thread::PLUGIN_NAME, RGB::TRACE());
             },
             Mode::Running => {
                 for (name, _) in self.map.iter() {
@@ -141,7 +142,30 @@ impl Manager {
         });
 
         self.map.insert(String::from("errorThread"), ThreadHandel::new(handle, Arc::new(AtomicBool::new(false)), status_clone));
+
+        #[cfg(feature = "led")]
+        self.start_light_dimmer();
     }
+
+    #[cfg(not(feature = "led"))]
+    pub fn start_light_dimmer(&mut self){
+        print("LED feature is not enabled, light dimmer will not be started", RGB::ALERT());
+    }
+
+    #[cfg(feature = "led")]
+    pub fn start_light_dimmer(&mut self){
+        let status :Arc<Mutex<Box<dyn Status>>> = Arc::new(Mutex::new(Box::new(IniStatus {})));
+        let status_clone = Arc::clone(&status);
+        let stopflag = Arc::new(AtomicBool::new(false));
+        let stopflag_clone = Arc::clone(&stopflag);
+        let error_sender = self.error_sender.clone();
+        let handle = thread::spawn(move || {
+            error_handeler::light_dimmer_thread::start_light_dim(error_sender, stopflag, status);
+        });
+
+        self.map.insert(error_handeler::light_dimmer_thread::PLUGIN_NAME.to_string(), ThreadHandel::new(handle, stopflag_clone, status_clone));
+    }
+
     pub fn stop_error(&mut self) {
         if let Err(_) = self.error_sender.send(ErrorOperation::StopErr) {
             print_error("Manager", "ErrorThread's receiver has been dropped too early", RGB::ERROR());
@@ -151,6 +175,14 @@ impl Manager {
             if let Err(x) = thread.handle.join() {
                 print_error("Manager", &format!("ErrorThread panicked while closing with error\n{:?}", x), RGB::ERROR());
                 exit(ERROR_PENICED)
+            }
+        }
+        if self.map.contains_key(&error_handeler::light_dimmer_thread::PLUGIN_NAME.to_string()) {
+            if let Some(thread) = self.map.remove(&error_handeler::light_dimmer_thread::PLUGIN_NAME.to_string()) {
+                thread.stop_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                if let Err(x) = thread.handle.join() {
+                    print_error("Manager", &format!("ErrorThread panicked while closing with error\n{:?}", x), RGB::ERROR());
+                }
             }
         }
     }
@@ -304,7 +336,10 @@ fn send_crash_notifier(crash_notifier: &Sender<String>, name: String) {
 
 #[derive(Deserialize)]
 struct Settings {
+    //TODO logic for downloading plugins
+    #[allow(dead_code)]
     update: HashMap<String, String>,
+    
     apps: HashMap<String, AppSetting>
 }
 

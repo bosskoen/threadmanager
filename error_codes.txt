@@ -6,3 +6,4 @@
 105: Failed to send error to ErrorThread
 106: Failed to notify main of unexpected crash
 107: Failed to start ThreadManager
+108: Failed to initialize light dimmer thread status

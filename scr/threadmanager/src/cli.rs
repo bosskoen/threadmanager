@@ -1,6 +1,8 @@
 use std::collections::HashMap;
-
+use library::error_handeler;
+#[allow(unused_imports)]
 use library::error_handeler::{print, print_error, ErrorOperation, LedOption, RGB};
+
 use crate::{private_lib::Manager, Mode};
 
 pub fn initialise_cli() -> HashMap<&'static str, Box<dyn Fn(&[&str], &mut Manager)>>{
@@ -11,6 +13,7 @@ pub fn initialise_cli() -> HashMap<&'static str, Box<dyn Fn(&[&str], &mut Manage
     cli.insert("list", Box::new(list_apps) as Box<dyn Fn(&[&str], &mut Manager)>);
     cli.insert("help", Box::new(help) as Box<dyn Fn(&[&str], &mut Manager)>);
     cli.insert("setting", Box::new(settings) as Box<dyn Fn(&[&str], &mut Manager)>);
+    cli.insert("led", Box::new(led) as Box<dyn Fn(&[&str], &mut Manager)>);
 
     cli
 }
@@ -24,9 +27,14 @@ fn start_app(args: &[&str], open_threads: &mut Manager){
         return;
     }
     print(&format!("Attempting to start thread: {}", args[0]), RGB::WHITE());
-    if let Err(err) = open_threads.start_new_thread(args[0].to_string()){
-        print(&format!("{err}"), RGB::WHITE());
-        return;
+
+    if args[0] == error_handeler::light_dimmer_thread::PLUGIN_NAME{
+        open_threads.start_light_dimmer();
+    }else {
+        if let Err(err) = open_threads.start_new_thread(args[0].to_string()){
+            print(&format!("{err}"), RGB::WHITE());
+            return;
+        }
     }
     if open_threads.is_running(args[0]){
         print(&format!("Thread {} is running", args[0]), RGB::SUCCESS());
@@ -46,7 +54,13 @@ fn stop_app(args: &[&str],open_threads: &mut Manager){
     if args[0] == "all"{
         print("Attempting to stop all threads", RGB::WHITE());
         open_threads.stop_all_threads();
+        print("Note: 'errorThread' is a permanent system thread and cannot be stopped.", RGB::TRACE());
+        #[cfg(predicate = "led")]
+        print(&format!("{} can't be stopped this way use the manual command to stop it.", error_handeler::light_dimmer_thread::PLUGIN_NAME), RGB::TRACE());
         print("All threads stopped", RGB::SUCCESS());
+        return;
+    }  if args[0] == "errorThread" {
+        print("Can't stop error thread", RGB::ERROR());
         return;
     }
     print(&format!("Attempting to stop thread: {}", args[0]), RGB::WHITE());
@@ -90,15 +104,19 @@ fn list_apps(args: &[&str], open_threads: &mut Manager){
     }
 }
 
-fn help(args: &[&str], open_threads: &mut Manager){
+fn help(args: &[&str], open_threads: &mut Manager) {
     if args.len() == 0 {
         // General help message for all commands
-        print("Available commands:\n\
-            start <thread name> - Start a thread\n\
+        print("Available commands:\n" , RGB::NOTICE());
+
+        print("start <thread name> - Start a thread\n\
             stop <thread name> - Stop a thread\n\
             status <thread name> - Get the status of a thread\n\
             list <running/stopped/all> - List all threads\n\
-            help <command>||[app <app name>] - Get help for a specific command", RGB::WHITE());
+            led <command> [args] - Control the LED system\n\
+            settings <command> - Configure settings\n\
+            help <command> || [app <app name>] - Get help for a specific command",
+            RGB::WHITE());
         return;
     } else if args.len() > 1 {
         if args[0] == "app" {
@@ -123,32 +141,51 @@ fn help(args: &[&str], open_threads: &mut Manager){
         "stop" => print("stop <thread name> - Stop the thread with the specified name", RGB::WHITE()),
         "status" => print("status <thread name> - Get the status of a running thread", RGB::WHITE()),
         "list" => print("list <running/stopped/all> - List threads based on their status (running, stopped, or all)", RGB::WHITE()),
-        "help" => print("help <command>||[app <app name>] - Get help for a specific command or app", RGB::WHITE()),
-        _ => print("Invalid command. Please specify 'start', 'stop', 'status', 'list', 'help' or 'app <app name>'", RGB::WHITE()),
+        "settings" => print("settings reload - Reload configuration settings", RGB::WHITE()),
+        "led" => print("led <on/off/reset/color/brightness> [args] - Control LED colors and brightness\n\
+                        Commands:\n\
+                        on/off/reset [red/green/blue/all] - Control specific colors\n\
+                        color <hex color (0xRRGGBB)> - Set LED color\n\
+                        brightness <0-255> - Set brightness level", RGB::WHITE()),
+        "help" => print("help <command> || [app <app name>] - Get help for a specific command or app", RGB::WHITE()),
+        _ => print("Invalid command. Please specify 'start', 'stop', 'status', 'list', 'led', 'settings', 'help' or 'app <app name>'", RGB::WHITE()),
     }
 }
 
 fn settings(args: &[&str], open_threads: &mut Manager) {
     if args.len() == 0 {
-        print("No argument provided. Please specify 'reload'.", RGB::WHITE());
+        print("No argument provided. Available command:\n\
+               reload - Reload configuration settings", RGB::WHITE());
         return;
     } else if args.len() > 1 {
-        print("Invalid argument. Please specify only 'reload'.", RGB::WHITE());
+        print("Invalid argument. Only 'reload' is supported.", RGB::WHITE());
         return;
     }
 
     match args[0] {
-        "reload" =>  open_threads.reload_settings(),
+        "reload" => open_threads.reload_settings(),
         _ => print("Invalid argument. Please specify 'reload'.", RGB::WHITE()),
     }
 }
 
+#[cfg(not(feature = "led"))]
+fn led(args: &[&str], open_threads: &mut Manager){
+    print("LED's are disabled in this build", RGB::WHITE());
+}
+
+#[cfg (feature = "led")]
 fn led(args: &[&str], open_threads: &mut Manager){
     if args.len() == 0 {
-        print("No argument provided. Please specify 'reload'.", RGB::WHITE());
+        print("Available LED commands:\n", RGB::NOTICE());
+        print( "on [red/green/blue/all]\n\
+        off [red/green/blue/all]\n\
+        reset [red/green/blue/all]\n\
+        color <hex color (0xRRGGBBAA)>\n\
+        brightness <0-255>",
+       RGB::WHITE());
         return;
     } else if args.len() > 2 {
-        print("Invalid argument. Please specify only 'reload'.", RGB::WHITE());
+        print("To manny arguments.", RGB::WHITE());
         return;
     }
     match args[0] {
@@ -214,9 +251,20 @@ fn led(args: &[&str], open_threads: &mut Manager){
         },
         "color" => {
             if args.len() == 2{
-                // set color
+                let color;
+                if args[1].len() == 8 && args[1].to_lowercase().starts_with("0x") {
+                    let trimde  = &args[1][2..];
+                    color = RGB::from_hex(u32::from_str_radix(trimde, 16).unwrap_or(0));
+                }else{
+                    print("Invalid argument. Please specify a color as hex (0xrrggbb|| 0XRRGGBB).", RGB::WHITE());
+                    return;
+                }
+                if let Err(_) = open_threads.error_sender.send(ErrorOperation::ChangeLed(color, false)){
+                    print_error("main", "failed to send led command", RGB::CRITICAL_ERROR());
+                }
             } else{
-                // errror
+                print("Invalid argument. Please specify a color as hex (0xrrggbb || 0XRRGGBB).", RGB::WHITE());
+                return;
             }
         },
         "brightness" => {
@@ -226,13 +274,23 @@ fn led(args: &[&str], open_threads: &mut Manager){
                     Ok(value) => new_level = value,
                     Err(_) => {print("invalit input, it needs to be a number", RGB::WHITE()); return;},
                 }
-                //TODO set level
+                if let Err(_) = open_threads.error_sender.send(ErrorOperation::CangeBrighness(new_level)){
+                    print_error("main", "failed to send led command", RGB::CRITICAL_ERROR());
+                }
             } else{
-                // errror
+                print("Invalid argument. Please specify a brightness level [0 - 16].", RGB::WHITE());
+                return;
             }
         },
-        _ => print("Invalid argument. Please specify only 'reload'.", RGB::WHITE()),
+        "help" => {
+            print("LED Command Help:\n", RGB::NOTICE());
+            print("on/off/reset [red/green/blue/all] - Control specific colors\n\
+                   color <hex color (0xRRGGBBAA)> - Set LED color\n\
+                   brightness <0-255> - Set brightness level",
+                   RGB::WHITE());
+        },
+        _ => print("Invalid LED command. Use 'led help' to see available commands.", RGB::WHITE()),
     }
 }
 
-//TODO update logic, LED control
+//TODO comand history
