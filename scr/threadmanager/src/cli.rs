@@ -180,7 +180,7 @@ fn led(args: &[&str], open_threads: &mut Manager){
         print( "led on [red/green/blue/all] [0-4/all]\n\
         led off [red/green/blue/all] [0-4/all]\n\
         led reset [red/green/blue/all] [0-4/all]\n\
-        led color <hex color (0xRRGGBBAA)> [0-4/all]\n\
+        led color <hex color (0xRRGGBB)> [0-4/all]\n\
         led brightness <0-16> [0-4/all]",
        RGB::WHITE());
         return;
@@ -337,7 +337,7 @@ fn led(args: &[&str], open_threads: &mut Manager){
         "help" => {
             print("LED Command Help:\n", RGB::NOTICE());
             print("led on/off/reset [red/green/blue/all] [0-4/all] - Control specific colors\n\
-                   led color <hex color (0xRRGGBBAA)> [0-4/all] - Set LED color\n\
+                   led color <hex color (0xRRGGBB)> [0-4/all] - Set LED color\n\
                    led brightness <0-16> [0-4/all] - Set brightness level",
                    RGB::WHITE());
         },
@@ -345,4 +345,5 @@ fn led(args: &[&str], open_threads: &mut Manager){
     }
 }
 
-//TODO comand history
+//TODO cleanup mach statmenst
+//TODO add completer for each command

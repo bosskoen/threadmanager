@@ -2,10 +2,13 @@ use std::{env, io::{self, Write}, process::exit, sync::mpsc};
 
 use library::error_handeler::{print, print_error, RGB};
 use private_lib::*;
+use rustyline::{config::Configurer, error::ReadlineError};
 mod private_lib;
 mod cli;
 
 const FAILED_TO_START_THREADMANIGER:i32 = 107;
+const FAILED_TO_START_CLI:i32 = 109;
+const MAX_CLI_HISTORY_SIZE: usize = 100;
 
 fn main() {
     let settings_path;
@@ -53,10 +56,51 @@ fn main() {
         }
     };
     open_threads.start_error(error_rx);
+
     let cli = cli::initialise_cli();
+    let mut rl = rustyline::Editor::<(), _>::new().unwrap_or_else(|err |{
+        print_error("main", &format!("Failed to create rustyline editor: {}", err), RGB::ERROR());
+        exit(FAILED_TO_START_THREADMANIGER);
+    }); // TODO test interupts
+    rl.set_max_history_size(MAX_CLI_HISTORY_SIZE).unwrap_or_else(|err| {
+        print_error("main", &format!("Failed to set max history size: {}", err), RGB::ERROR());
+    });
+    rl.set_auto_add_history(true);
 
     loop {
-        print!("> ");
+        match rl.readline("> "){
+            Ok(line) => {
+                let input = line.trim();
+
+                let mut args = input.split_whitespace();
+                let command = args.next().unwrap_or_default();
+
+                if command == "exit" {
+                    break;
+                }
+                if let Some(func) = cli.get(command) {
+                    func(args.collect::<Vec<&str>>().as_slice(), &mut open_threads);
+                } else {
+                    print("Command not found. Type 'help' for a list of commands.", RGB::WHITE());
+                }
+            }
+            Err(ReadlineError::Interrupted) => {
+                print("CTRL-C pressed, exiting.", RGB::WHITE());
+                break;
+            }
+            Err(ReadlineError::Eof) => {
+                print("CTRL-D pressed, exiting.", RGB::WHITE());
+                break;////
+            }
+            Err(err) => {
+                print_error("main", &format!("Error: {:?}", err), RGB::ERROR());
+                break;
+            }
+        }
+
+        crach_rx.try_iter().for_each(|msg| {let _ = open_threads.stop_thread(msg); });
+
+        /*print!("> ");
         if let Err(err) = io::stdout().flush(){
             print_error("main", &format!("Failed to flush stdout: {}", err), RGB::ERROR());
             continue;
@@ -73,13 +117,13 @@ fn main() {
         let mut args = input.split_whitespace();
         let command = args.next().unwrap_or_default();
         if command == "exit" {
-            break;
+            break; 
         }
         if let Some(func) = cli.get(command) {
             func(args.collect::<Vec<&str>>().as_slice(), &mut open_threads);
         } else {
             print("Command not found. Type 'help' for a list of commands.", RGB::WHITE());
-        }
+        }*/
     }
     drop(open_threads);
 }

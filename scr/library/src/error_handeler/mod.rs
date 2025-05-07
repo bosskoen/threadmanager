@@ -326,6 +326,9 @@ fn print_message(stream: &mut StandardStream, message: &str, color: RGB) {
     if let Err(err) = stream.set_color(ColorSpec::new().set_fg(Some(Color::Rgb(255,255,255)))) {
         eprintln!("Failed to reset stream: {}", err);
     }
+    if let Err(err) = stream.flush() {
+        eprintln!("Failed to flush stream: {}", err);
+    }
 }
 
 pub fn reset_color() {

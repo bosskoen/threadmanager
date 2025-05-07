@@ -7,3 +7,4 @@
 106: Failed to notify main of unexpected crash
 107: Failed to start ThreadManager
 108: Failed to initialize light dimmer thread status
+109: Failed to start rustyline cli
