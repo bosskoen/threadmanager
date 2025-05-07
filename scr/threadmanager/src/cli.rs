@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use library::error_handeler;
+use library::error_handeler::{self, LedNumber};
 #[allow(unused_imports)]
 use library::error_handeler::{print, print_error, ErrorOperation, LedOption, RGB};
 
@@ -55,7 +55,7 @@ fn stop_app(args: &[&str],open_threads: &mut Manager){
         print("Attempting to stop all threads", RGB::WHITE());
         open_threads.stop_all_threads();
         print("Note: 'errorThread' is a permanent system thread and cannot be stopped.", RGB::TRACE());
-        #[cfg(predicate = "led")]
+        #[cfg(feature = "led")]
         print(&format!("{} can't be stopped this way use the manual command to stop it.", error_handeler::light_dimmer_thread::PLUGIN_NAME), RGB::TRACE());
         print("All threads stopped", RGB::SUCCESS());
         return;
@@ -107,7 +107,7 @@ fn list_apps(args: &[&str], open_threads: &mut Manager){
 fn help(args: &[&str], open_threads: &mut Manager) {
     if args.len() == 0 {
         // General help message for all commands
-        print("Available commands:\n" , RGB::NOTICE());
+        print("Available commands:" , RGB::NOTICE());
 
         print("start <thread name> - Start a thread\n\
             stop <thread name> - Stop a thread\n\
@@ -176,82 +176,123 @@ fn led(args: &[&str], open_threads: &mut Manager){
 #[cfg (feature = "led")]
 fn led(args: &[&str], open_threads: &mut Manager){
     if args.len() == 0 {
-        print("Available LED commands:\n", RGB::NOTICE());
-        print( "on [red/green/blue/all]\n\
-        off [red/green/blue/all]\n\
-        reset [red/green/blue/all]\n\
-        color <hex color (0xRRGGBBAA)>\n\
-        brightness <0-255>",
+        print("Available LED commands:", RGB::NOTICE());
+        print( "led on [red/green/blue/all] [0-4/all]\n\
+        led off [red/green/blue/all] [0-4/all]\n\
+        led reset [red/green/blue/all] [0-4/all]\n\
+        led color <hex color (0xRRGGBBAA)> [0-4/all]\n\
+        led brightness <0-16> [0-4/all]",
        RGB::WHITE());
         return;
-    } else if args.len() > 2 {
+    } else if args.len() > 3 {
         print("To manny arguments.", RGB::WHITE());
         return;
     }
     match args[0] {
         "off" => {
-            if args.len() == 2{
+            if args.len() == 3{
                 let oper;
+                let led_num;
                 match args[1] {
                     "red" => oper = LedOption::Red,
                     "green" => oper = LedOption::Green,
                     "blue" => oper = LedOption::Blue,
                     "all" => oper = LedOption::All,
-                    _ => {print("", RGB::WHITE());
+                    _ => {print("Invalid argument. please specify a color and LED\nled off [red/green/blue/all] [1-4/all]", RGB::WHITE());
                         return;},
                 }
-                if let Err(_) = open_threads.error_sender.send(ErrorOperation::OffColor(oper)){
+                match args[2]{
+                    "0" => led_num = LedNumber::LED1,
+                    "1" => led_num = LedNumber::LED2,
+                    "2" => led_num = LedNumber::LED3,
+                    "3" => led_num = LedNumber::LED4,
+                    "4" => led_num = LedNumber::LED5,
+                    "all" => led_num = LedNumber::ALL,
+                    _ => {print("Invalid argument. please specify a color and LED\nled off [red/green/blue/all] [1-4/all]", RGB::WHITE());
+                        return;},
+                }   
+                if let Err(_) = open_threads.error_sender.send(ErrorOperation::OffColor(oper, led_num)){
                     print_error("main", "failed to send led command", RGB::CRITICAL_ERROR());
                 }
             } else{
-                if let Err(_) = open_threads.error_sender.send(ErrorOperation::OffColor(LedOption::All)){
-                    print_error("main", "failed to send led command", RGB::CRITICAL_ERROR());
-                }
+                print("Invalid argument. please specify a color and LED\nled off [red/green/blue/all] [1-4/all]", RGB::WHITE());
+                return;
             }
         },
         "on" => {
-            if args.len() == 2{
+            if args.len() == 3{
                 let oper;
+                let led_num;
                 match args[1] {
                     "red" => oper = LedOption::Red,
                     "green" => oper = LedOption::Green,
                     "blue" => oper = LedOption::Blue,
                     "all" => oper = LedOption::All,
-                    _ => {print("", RGB::WHITE());
+                    _ => {print("Invalid argument. please specify a color and LED\nled on [red/green/blue/all] [1-4/all]", RGB::WHITE());
                         return;},
                 }
-                if let Err(_) = open_threads.error_sender.send(ErrorOperation::OnColor(oper)){
+                match args[2]{
+                    "0" => led_num = LedNumber::LED1,
+                    "1" => led_num = LedNumber::LED2,
+                    "2" => led_num = LedNumber::LED3,
+                    "3" => led_num = LedNumber::LED4,
+                    "4" => led_num = LedNumber::LED5,
+                    "all" => led_num = LedNumber::ALL,
+                    _ => {print("Invalid argument. please specify a color and LED\nled on [red/green/blue/all] [1-4/all]", RGB::WHITE());
+                        return;},
+                }   
+                if let Err(_) = open_threads.error_sender.send(ErrorOperation::OnColor(oper, led_num)){
                     print_error("main", "failed to send led command", RGB::CRITICAL_ERROR());
                 }
             } else{
-                if let Err(_) = open_threads.error_sender.send(ErrorOperation::OnColor(LedOption::All)){
-                    print_error("main", "failed to send led command", RGB::CRITICAL_ERROR());
-                }
+                print("Invalid argument. please specify a color and LED\nled on [red/green/blue/all] [1-4/all]", RGB::WHITE());
+                return;
             }
         },
         "reset" => {
-            if args.len() == 2{
+            if args.len() == 3{
                 let oper;
+                let led_num;
                 match args[1] {
                     "red" => oper = LedOption::Red,
                     "green" => oper = LedOption::Green,
                     "blue" => oper = LedOption::Blue,
                     "all" => oper = LedOption::All,
-                    _ => {print("", RGB::WHITE());
+                    _ => {print("Invalid argument. please specify a color and LED\nled reset [red/green/blue/all] [1-4/all]", RGB::WHITE());
                         return;},
                 }
-                if let Err(_) = open_threads.error_sender.send(ErrorOperation::RestColor(oper)){
+                match args[2]{
+                    "0" => led_num = LedNumber::LED1,
+                    "1" => led_num = LedNumber::LED2,
+                    "2" => led_num = LedNumber::LED3,
+                    "3" => led_num = LedNumber::LED4,
+                    "4" => led_num = LedNumber::LED5,
+                    "all" => led_num = LedNumber::ALL,
+                    _ => {print("Invalid argument. please specify a color and LED\nled reset [red/green/blue/all] [1-4/all]", RGB::WHITE());
+                        return;},
+                } 
+                if let Err(_) = open_threads.error_sender.send(ErrorOperation::RestColor(oper, led_num)){
                     print_error("main", "failed to send led command", RGB::CRITICAL_ERROR());
                 }
             } else{
-                if let Err(_) = open_threads.error_sender.send(ErrorOperation::RestColor(LedOption::All)){
-                    print_error("main", "failed to send led command", RGB::CRITICAL_ERROR());
-                }
+                print("Invalid argument. please specify a color and LED\nled reset [red/green/blue/all] [1-4/all]", RGB::WHITE());
+                return;
             }
         },
         "color" => {
-            if args.len() == 2{
+            if args.len() == 3{
                 let color;
+                let led_num;
+                match args[2] {
+                    "0" => led_num = LedNumber::LED1,
+                    "1" => led_num = LedNumber::LED2,
+                    "2" => led_num = LedNumber::LED3,
+                    "3" => led_num = LedNumber::LED4,
+                    "4" => led_num = LedNumber::LED5,
+                    "all" => led_num = LedNumber::ALL,
+                    _ => {print("Invalid argument. please specify a color and LED\nled off (0xrrggbb|| 0XRRGGBB)[1-4/all]", RGB::WHITE());
+                        return;},
+                }
                 if args[1].len() == 8 && args[1].to_lowercase().starts_with("0x") {
                     let trimde  = &args[1][2..];
                     color = RGB::from_hex(u32::from_str_radix(trimde, 16).unwrap_or(0));
@@ -259,34 +300,45 @@ fn led(args: &[&str], open_threads: &mut Manager){
                     print("Invalid argument. Please specify a color as hex (0xrrggbb|| 0XRRGGBB).", RGB::WHITE());
                     return;
                 }
-                if let Err(_) = open_threads.error_sender.send(ErrorOperation::ChangeLed(color, false)){
+                if let Err(_) = open_threads.error_sender.send(ErrorOperation::ChangeLed(color, false, led_num)){
                     print_error("main", "failed to send led command", RGB::CRITICAL_ERROR());
                 }
             } else{
-                print("Invalid argument. Please specify a color as hex (0xrrggbb || 0XRRGGBB).", RGB::WHITE());
+                print("Invalid argument. please specify a color and LED\nled off (0xrrggbb|| 0XRRGGBB)[1-4/all]", RGB::WHITE());
                 return;
             }
         },
         "brightness" => {
-            if args.len() == 2{
+            if args.len() == 3{
                 let new_level;
+                let led_num;
+                match args[2] {
+                    "0" => led_num = LedNumber::LED1,
+                    "1" => led_num = LedNumber::LED2,
+                    "2" => led_num = LedNumber::LED3,
+                    "3" => led_num = LedNumber::LED4,
+                    "4" => led_num = LedNumber::LED5,
+                    "all" => led_num = LedNumber::ALL,
+                    _ => {print("Invalid argument. please specify a brightness and LED\nled off [0-16] [1-4/all]", RGB::WHITE());
+                        return;},
+                }
                 match args[1].parse::<u8>() {
                     Ok(value) => new_level = value,
                     Err(_) => {print("invalit input, it needs to be a number", RGB::WHITE()); return;},
                 }
-                if let Err(_) = open_threads.error_sender.send(ErrorOperation::CangeBrighness(new_level)){
+                if let Err(_) = open_threads.error_sender.send(ErrorOperation::CangeBrighness(new_level, led_num)){
                     print_error("main", "failed to send led command", RGB::CRITICAL_ERROR());
                 }
             } else{
-                print("Invalid argument. Please specify a brightness level [0 - 16].", RGB::WHITE());
+                print("Invalid argument. Please specify a brightness level and LED [0 - 16].\nled brightness [0-16] [0-4/all]", RGB::WHITE());
                 return;
             }
         },
         "help" => {
             print("LED Command Help:\n", RGB::NOTICE());
-            print("on/off/reset [red/green/blue/all] - Control specific colors\n\
-                   color <hex color (0xRRGGBBAA)> - Set LED color\n\
-                   brightness <0-255> - Set brightness level",
+            print("led on/off/reset [red/green/blue/all] [0-4/all] - Control specific colors\n\
+                   led color <hex color (0xRRGGBBAA)> [0-4/all] - Set LED color\n\
+                   led brightness <0-16> [0-4/all] - Set brightness level",
                    RGB::WHITE());
         },
         _ => print("Invalid LED command. Use 'led help' to see available commands.", RGB::WHITE()),

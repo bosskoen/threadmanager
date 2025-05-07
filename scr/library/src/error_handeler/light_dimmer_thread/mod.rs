@@ -51,13 +51,13 @@ pub fn start_light_dim(error_handel: Sender<ErrorOperation>, stopflag: Arc<Atomi
             break;
         }
         if start_of_loop.hour() >= TIME_TO_DIM && last_updated.hour() < TIME_TO_DIM{
-            if let Err(_) = error_handel.send(ErrorOperation::CangeBrighness(LED_NIGHT_BRIGHTNESS)){
+            if let Err(_) = error_handel.send(ErrorOperation::CangeBrighness(LED_NIGHT_BRIGHTNESS, super::LedNumber::ALL)){
                 print_error(PLUGIN_NAME, "Failed to send mesige to error thread", RGB::CRITICAL_ERROR());
                 exit(ERROR_THREAD_DOWN);
             }
         }
         else if start_of_loop.hour() >= TIME_TO_BRIGHTEN && last_updated.hour() < TIME_TO_BRIGHTEN{
-            if let Err(_) = error_handel.send(ErrorOperation::CangeBrighness(LED_DAY_BRIGHTNESS)){
+            if let Err(_) = error_handel.send(ErrorOperation::CangeBrighness(LED_DAY_BRIGHTNESS, super::LedNumber::ALL)){
                 print_error(PLUGIN_NAME, "Failed to send mesige to error thread", RGB::CRITICAL_ERROR());
                 exit(ERROR_THREAD_DOWN);
             }

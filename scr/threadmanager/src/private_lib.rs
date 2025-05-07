@@ -21,7 +21,9 @@ pub struct Manager {
 
 impl Drop for Manager {
     fn drop(&mut self) {
+        print("Stopping all threads", RGB::NOTICE());
         self.stop_all_threads();
+        print("Stopping error thread", RGB::NOTICE());
         self.stop_error();
         reset_color();
     }
@@ -83,16 +85,31 @@ impl Manager {
     }
 
     pub fn stop_all_threads(&mut self) {
+        let mut to_keep = Vec::new();
+        let mut to_remove = Vec::new();
+
         for (name, handle) in self.map.drain() {
             if name == "errorThread" || name == error_handeler::light_dimmer_thread::PLUGIN_NAME {
+                to_keep.push((name, handle)); // Save to reinsert later
                 continue;
             }
+        
             print(&format!("stopping: {name}"), RGB::NOTICE());
             handle.stop_flag.store(true, std::sync::atomic::Ordering::Relaxed);
-            if let Err(x) = handle.handle.join() {
+            to_remove.push((name, handle.handle));
+           
+            println!();
+        }
+        
+        // Reinsert the kept entries back into the map
+        for (name, handle) in to_keep {
+            self.map.insert(name, handle);
+        }
+
+        for (name, handle) in to_remove{
+            if let Err(x) = handle.join() {
                 print_error("Manager", &format!("{} panicked while closing with error\n{:?}", name, x), RGB::ERROR());
             }
-            println!("");
         }
     }
 
@@ -287,7 +304,7 @@ fn thread_logic(dll_path: &str, name: String, sender_clone: Sender<ErrorOperatio
                             print_error("Manager", &format!("{}", fatal_error), RGB::CRITICAL_ERROR());
                             exit(ERROR_THREAD_DOWN)
                         } else {
-                            if let Err(_) = sender.send(ErrorOperation::PrintAndChangeLed(name.clone(), format!("Thread stopped with errors {}", err), RGB::WARNING(), RGB::RED())) {
+                            if let Err(_) = sender.send(ErrorOperation::PrintAndChangeLedError(name.clone(), format!("Thread stopped with errors {}", err), RGB::WARNING(), RGB::RED(), error_handeler::LedNumber::LED1)) {
                                 print_error("Manager", &format!("Error while sending error: {} Thread stopped with errors {}", name, err), RGB::CRITICAL_ERROR());
                                 exit(ERROR_THREAD_DOWN);
                             }
@@ -297,11 +314,11 @@ fn thread_logic(dll_path: &str, name: String, sender_clone: Sender<ErrorOperatio
                 }
             },
             Err(error) => {
-                if let Err(_) = sender.send(ErrorOperation::PrintAndChangeLed(name.clone(), format!("Thread panicked unexpectedly: {:?}", error), RGB::CRITICAL_ERROR(), RGB::RED())) {
+                if let Err(_) = sender.send(ErrorOperation::PrintAndChangeLedError(name.clone(), format!("Thread panicked unexpectedly: {:?}", error), RGB::CRITICAL_ERROR(), RGB::RED(), error_handeler::LedNumber::LED1)) {
                     print_error("Manager", &format!("Error while sending error: {} Thread panicked unexpectedly: {:?}", name, error), RGB::CRITICAL_ERROR());
                     exit(ERROR_THREAD_DOWN);
                 }
-                if let Err(_) = sender.send(ErrorOperation::OnColor(LedOption::Red)) {
+                if let Err(_) = sender.send(ErrorOperation::OnColor(LedOption::Red, error_handeler::LedNumber::LED1)) {
                     print_error("Manager", &format!("Error while sending error: {} Thread panicked unexpectedly: {:?}", name, error), RGB::CRITICAL_ERROR());
                     exit(ERROR_THREAD_DOWN);
                 }

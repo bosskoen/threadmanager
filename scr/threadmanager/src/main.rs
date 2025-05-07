@@ -83,6 +83,3 @@ fn main() {
     }
     drop(open_threads);
 }
-
-
-//TODO led changer ldd

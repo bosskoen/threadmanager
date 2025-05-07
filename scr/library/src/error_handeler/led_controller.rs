@@ -1,65 +1,9 @@
 // linter could be broken if the feature les is not enabled
 
-#[derive(Clone, Copy)]
-#[allow(dead_code)]
-#[repr(u8)] 
-pub enum LedNumber{
-    LED1 = 0,
-    LED2 = 1,
-    LED3 = 2,
-    LED4 = 3,
-    LED5 = 4,
-}
-
-impl std::fmt::Display for LedNumber {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            LedNumber::LED1 => write!(f, "LED 1"),
-            LedNumber::LED2 => write!(f, "LED 2"),
-            LedNumber::LED3 => write!(f, "LED 3"),
-            LedNumber::LED4 => write!(f, "LED 4"),
-            LedNumber::LED5 => write!(f, "LED 5"),
-        }
-    }
-}
-impl std::ops::Mul<u8> for LedNumber{
-    type Output = u8;
-
-    fn mul(self, rhs: u8) -> Self::Output {
-        self as u8 * rhs
-    }
-}
-
-impl From<u8> for LedNumber{
-    fn from(value: u8) -> Self {
-        match value {
-            0 => LedNumber::LED1,
-            1 => LedNumber::LED2,
-            2 => LedNumber::LED3,
-            3 => LedNumber::LED4,
-            4 => LedNumber::LED5,
-            _ => panic!("Invalid LED number"),
-        }
-    }
-}
-impl From<usize> for LedNumber{
-    fn from(value: usize) -> Self {
-        match value {
-            0 => LedNumber::LED1,
-            1 => LedNumber::LED2,
-            2 => LedNumber::LED3,
-            3 => LedNumber::LED4,
-            4 => LedNumber::LED5,
-            _ => panic!("Invalid LED number"),
-        }
-    }
-}
-
-
+use super::{LedNumber, LedOption, RGB};
 #[cfg(feature = "GPIO")]
 pub mod led {
-    use crate::error_handeler::RGB;
-    use super::LedNumber;
+    use crate::error_handeler::{LedNumber, RGB};
     use rppal;
 
     #[derive(Debug)]
@@ -214,7 +158,6 @@ pub mod led {
             }
             Ok(())
         }
-        //TODO set brightness when evening or day
         pub fn set_brightness_all(&mut self, level: [u8; 5]) -> Result<(), LedError> {
             if let None = self.pin {
                 return Ok(());
@@ -333,6 +276,87 @@ pub mod led {
             cont_ref.smbus_write_byte(LED_SUB2 + 3+ (led_number*LED_OFSET), value & 0x0F)?;
             Ok(())
         }
+        pub fn red_reset_all(&mut self) -> Result<(), LedError> {
+            if let None = self.pin {
+                return Ok(());
+            }
+            for i in 0..self.color.len() {
+                self.red_reset(i.into())?;
+            }
+            Ok(())
+        }
+        pub fn green_reset_all(&mut self) -> Result<(), LedError> {
+            if let None = self.pin {
+                return Ok(());
+            }
+            for i in 0..self.color.len() {
+                self.green_reset(i.into())?;
+            }
+            Ok(())
+        }
+        pub fn blue_reset_all(&mut self) -> Result<(), LedError> {
+            if let None = self.pin {
+                return Ok(());
+            }
+            for i in 0..self.color.len() {
+                self.blue_reset(i.into())?;
+            }
+            Ok(())
+        }
+        pub fn red_off_all(&mut self) -> Result<(), LedError> {
+            if let None = self.pin {
+                return Ok(());
+            }
+            for i in 0..self.color.len() {
+                self.red_off(i.into())?;
+            }
+            Ok(())
+        }
+        pub fn green_off_all(&mut self) -> Result<(), LedError> {
+            if let None = self.pin {
+                return Ok(());
+            }
+            for i in 0..self.color.len() {
+                self.green_off(i.into())?;
+            }
+            Ok(())
+        }
+        pub fn blue_off_all(&mut self) -> Result<(), LedError> {
+            if let None = self.pin {
+                return Ok(());
+            }
+            for i in 0..self.color.len() {
+                self.blue_off(i.into())?;
+            }
+            Ok(())
+        }
+        pub fn red_on_all(&mut self) -> Result<(), LedError> {
+            if let None = self.pin {
+                return Ok(());
+            }
+            for i in 0..self.color.len() {
+                self.red_on(i.into())?;
+            }
+            Ok(())
+        }
+        pub fn green_on_all(&mut self) -> Result<(), LedError> {
+            if let None = self.pin {
+                return Ok(());
+            }
+            for i in 0..self.color.len() {
+                self.green_on(i.into())?;
+            }
+            Ok(())
+        }
+        pub fn blue_on_all(&mut self) -> Result<(), LedError> {
+            if let None = self.pin {
+                return Ok(());
+            }
+            for i in 0..self.color.len() {
+                self.blue_on(i.into())?;
+            }
+            Ok(())
+        }
     }
 
     fn check_index(max:u8, index:u8) -> Result<(),LedError>{
@@ -365,8 +389,7 @@ pub mod led {
 
 #[cfg(not(feature = "GPIO"))]
 pub mod led {
-    use super::LedNumber;
-    use crate::error_handeler::{print_interup, RGB};
+    use crate::error_handeler::{print_interup, RGB, LedNumber};
 
     #[derive(Debug)]
    pub enum LedError{
@@ -418,7 +441,6 @@ pub mod led {
             print_interup("led_controler", &format!("{} brightness set to {}", led_number, level), RGB::NOTICE());
             Ok(())
         }
-        //TODO set brightness when evening or day
         pub fn set_color_all(&mut self, color: [RGB; 5]) -> Result<(), LedError>{
             self.color = color;
             print_interup("led_controler", "All LED colors set", RGB::NOTICE());
@@ -467,5 +489,141 @@ pub mod led {
             print_interup("led_controler", "Blue LED reset", RGB::NOTICE());
             Ok(())
         }
+
+        pub fn red_reset_all(&mut self) -> Result<(), LedError>{
+            print_interup("led_controler","All Red LEDs reset", RGB::NOTICE());
+            Ok(())
+        }
+        pub fn green_reset_all(&mut self) -> Result<(), LedError>{
+            print_interup("led_controler","All Green LEDs reset", RGB::NOTICE());
+            Ok(())
+        }
+        pub fn blue_reset_all(&mut self) -> Result<(), LedError>{
+            print_interup("led_controler","All Blue LEDs reset", RGB::NOTICE());
+            Ok(())
+        }
+        pub fn red_off_all(&mut self) -> Result<(), LedError>{
+            print_interup("led_controler","All Red LEDs turned off", RGB::NOTICE());
+            Ok(())
+        }
+        pub fn green_off_all(&mut self) -> Result<(), LedError>{
+            print_interup("led_controler","All Green LEDs turned off", RGB::NOTICE());
+            Ok(())
+        }
+        pub fn blue_off_all(&mut self) -> Result<(), LedError>{
+            print_interup("led_controler","All Blue LEDs turned off", RGB::NOTICE());
+            Ok(())
+        }
+        pub fn red_on_all(&mut self) -> Result<(), LedError>{
+            print_interup("led_controler","All Red LEDs turned on", RGB::NOTICE());
+            Ok(())
+        }
+        pub fn green_on_all(&mut self) -> Result<(), LedError>{
+            print_interup("led_controler","All Green LEDs turned on", RGB::NOTICE());
+            Ok(())
+        }
+        pub fn blue_on_all(&mut self) -> Result<(), LedError>{
+            print_interup("led_controler","All Blue LEDs turned on", RGB::NOTICE());
+            Ok(())
+        }
     }
+
+}
+
+pub fn change_led_color(led_controller: &mut led::LedController, color: RGB, led_number: LedNumber) -> Result<(), led::LedError> {
+    if led_number == LedNumber::ALL{
+        led_controller.set_color_all([color; 5])?;
+        return Ok(());
+    }
+    led_controller.set_color(color, led_number)?;
+    Ok(())
+}
+
+pub fn change_led_brightness(led_controller: &mut led::LedController, level: u8, led_number: LedNumber) -> Result<(), led::LedError> {
+    if led_number == LedNumber::ALL {
+        led_controller.set_brightness_all([level; 5])?;
+        return Ok(());
+    }
+    led_controller.set_brightness(level, led_number)?;
+    Ok(())
+}
+
+pub fn reset_color_led(led_controller: &mut led::LedController, color: LedOption ,led_number: LedNumber) -> Result<(), led::LedError> {
+    if led_number == LedNumber::ALL {
+        match color {
+            LedOption::Red => led_controller.red_reset_all()?,
+            LedOption::Green => led_controller.green_reset_all()?,
+            LedOption::Blue => led_controller.blue_reset_all()?,
+            LedOption::All => {
+                led_controller.red_reset_all()?;
+                led_controller.green_reset_all()?;
+                led_controller.blue_reset_all()?;
+            }
+        }
+       return Ok(());
+    }
+    match color {
+        LedOption::Red => led_controller.red_reset(led_number)?,
+        LedOption::Green => led_controller.green_reset(led_number)?,
+        LedOption::Blue => led_controller.blue_reset(led_number)?,
+        LedOption::All => {
+            led_controller.red_reset(led_number)?;
+            led_controller.green_reset(led_number)?;
+            led_controller.blue_reset(led_number)?;
+        }
+    }
+    Ok(())
+}
+
+pub fn color_off(led_controller: &mut led::LedController, color: LedOption, led_number: LedNumber) -> Result<(), led::LedError> {
+    if led_number == LedNumber::ALL {
+        match color {
+            LedOption::Red => led_controller.red_off_all()?,
+            LedOption::Green => led_controller.green_off_all()?,
+            LedOption::Blue => led_controller.blue_off_all()?,
+            LedOption::All => {
+                led_controller.red_off_all()?;
+                led_controller.green_off_all()?;
+                led_controller.blue_off_all()?;
+            }
+        }
+        return Ok(());
+    }
+    match color {
+        LedOption::Red => led_controller.red_off(led_number)?,
+        LedOption::Green => led_controller.green_off(led_number)?,
+        LedOption::Blue => led_controller.blue_off(led_number)?,
+        LedOption::All => {
+            led_controller.red_off(led_number)?;
+            led_controller.green_off(led_number)?;
+            led_controller.blue_off(led_number)?;
+        }
+    }
+    Ok(())
+}
+pub fn color_on(led_controller: &mut led::LedController, color: LedOption, led_number: LedNumber) -> Result<(), led::LedError> {
+    if led_number == LedNumber::ALL {
+        match color {
+            LedOption::Red => led_controller.red_on_all()?,
+            LedOption::Green => led_controller.green_on_all()?,
+            LedOption::Blue => led_controller.blue_on_all()?,
+            LedOption::All => {
+                led_controller.red_on_all()?;
+                led_controller.green_on_all()?;
+                led_controller.blue_on_all()?;
+            }
+        }
+        return Ok(());
+    }
+    match color {
+        LedOption::Red => led_controller.red_on(led_number)?,
+        LedOption::Green => led_controller.green_on(led_number)?,
+        LedOption::Blue => led_controller.blue_on(led_number)?,
+        LedOption::All => {
+            led_controller.red_on(led_number)?;
+            led_controller.green_on(led_number)?;
+            led_controller.blue_on(led_number)?;
+        }
+    }
+    Ok(())
 }

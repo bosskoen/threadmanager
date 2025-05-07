@@ -5,6 +5,12 @@ pub struct RGB {
     b: u8
 }
 
+impl std::fmt::Display for RGB {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "RGB({}, {}, {})", self.r, self.g, self.b)
+    }
+}
+
 impl RGB {
     /// Creates a new RGB color.
     ///
@@ -19,7 +25,7 @@ impl RGB {
     /// ```
     /// let color = RGB::new(255, 0, 0); // Red
     /// ```
-    pub fn new(r: u8, g: u8, b: u8) -> Self {
+    pub const fn new(r: u8, g: u8, b: u8) -> Self {
         Self { r, g, b }
     }
 
@@ -34,7 +40,7 @@ impl RGB {
     /// ```
     /// let color = RGB::from_hex(0xFF0000); // Red
     /// ```
-    pub fn from_hex(hex: u32) -> Self {
+    pub const fn from_hex(hex: u32) -> Self {
         Self::new(((hex >> 16) & 255) as u8, ((hex >> 8) & 255) as u8, (hex & 255) as u8)
     }
 

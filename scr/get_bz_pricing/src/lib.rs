@@ -9,6 +9,7 @@ mod parsing;
 mod type_dependecies;
 
 const APP_NAME: &str = "get_bz_pricing";
+const WARNGING_ORANGE: RGB = RGB::from_hex(0xff7d00);
 
 #[no_mangle]
 pub fn start(error_handel: Sender<ErrorOperation>, stopflag: Arc<AtomicBool>, status: Arc<Mutex<Box<dyn Status>>>, settings_path: String) -> Result<(), Box<dyn std::error::Error>>{
@@ -25,7 +26,9 @@ pub fn start(error_handel: Sender<ErrorOperation>, stopflag: Arc<AtomicBool>, st
             context.time_passed = 0;
             get_bz_data(&error_handel, &mut context).map_err(|err|match err {
                 PricingError::ErrorThreadDown(messige) => Box::new(ErrorThreadDownError::new(APP_NAME, &messige)),
-                _ => Box::new(err) as Box<dyn std::error::Error>
+                _ => { if let Err(_) = error_handel.send(ErrorOperation::PrintAndChangeLedError(APP_NAME.to_string(),format!("error while getting data from api, retrying next cycle\n{err}"), RGB::ERROR(), WARNGING_ORANGE, error_handeler::LedNumber::LED2))
+                    { return Box::new(ErrorThreadDownError::new(APP_NAME, "")) as Box<dyn std::error::Error>; };
+                Box::new(err) as Box<dyn std::error::Error> }
             })?;
         }else{
             context.time_passed += context.step_rate;
@@ -34,9 +37,9 @@ pub fn start(error_handel: Sender<ErrorOperation>, stopflag: Arc<AtomicBool>, st
         let endloop =match start_of_loop.elapsed() {
             Ok(duration) => duration,
             Err(error) => {
-                if let Err(_) = error_handel.send(ErrorOperation::Print(APP_NAME.to_string(),format!("error while getting elapsed time: {error}"), RGB::ERROR())){
+                if let Err(_) = error_handel.send(ErrorOperation::PrintAndChangeLed(APP_NAME.to_string(),format!("error while getting elapsed time: {error}"), RGB::ERROR(), WARNGING_ORANGE, error_handeler::LedNumber::LED2)){
                     return Err(Box::new(ErrorThreadDownError::new(APP_NAME,&format!("error while getting elapsed time: {error}"))));
-                }
+                } 
                 Duration::ZERO
             },
         };
@@ -44,7 +47,7 @@ pub fn start(error_handel: Sender<ErrorOperation>, stopflag: Arc<AtomicBool>, st
         if let Some(sleep_duration) = Duration::from_secs(context.step_rate as u64).checked_sub(endloop) {
             thread::sleep(sleep_duration);
         } else {
-            if let Err(_) = error_handel.send(ErrorOperation::Print(APP_NAME.to_string(),"loop took too long".to_string(), RGB::WARNING())){
+            if let Err(_) = error_handel.send(ErrorOperation::PrintAndChangeLed(APP_NAME.to_string(),"loop took too long".to_string(), RGB::WARNING(), RGB::INFO(), error_handeler::LedNumber::LED2)){
                 return Err(Box::new(ErrorThreadDownError::new(APP_NAME, "loop took too long")));
             }
             context.time_passed += (endloop.saturating_sub(Duration::from_secs(context.step_rate as u64))).as_secs() as usize;
@@ -222,7 +225,7 @@ fn ensure_column_exists(conn: &Connection, table_name: &str, column_name: &str, 
 
 fn get_data_from_api(error_handel: &Sender<ErrorOperation>, context: &Context)-> Result<(BzData,(usize,usize)), PricingError> {
     let data = web_service_adapter::get_data_plus_size(&context.url, 3, Duration::from_secs(3)).map_err(|err| {
-        if let Err(_) = error_handel.send(ErrorOperation::Print(APP_NAME.to_string(), format!("error while fetching data from api, retrying next cycle\n{err}"), RGB::WARNING())){
+        if let Err(_) = error_handel.send(ErrorOperation::PrintAndChangeLedError(APP_NAME.to_string(), format!("error while fetching data from api, retrying next cycle\n{err}"), RGB::WARNING(), WARNGING_ORANGE, error_handeler::LedNumber::LED2)){
             return PricingError::ErrorThreadDown(format!("error while fetching data from api, retrying next cycle\n{err}"));
         }
         PricingError::NonFatal
@@ -233,13 +236,13 @@ fn get_data_from_api(error_handel: &Sender<ErrorOperation>, context: &Context)->
     let json_data = BzData::from_data(data.text).map_err(|err|
     match err {
         PricingError::JSONReadError => {
-            if let Err(_) = error_handel.send(ErrorOperation::Print(APP_NAME.to_string(),"error while parsing the json, retrying next cycle".to_string(), RGB::ERROR())){
+            if let Err(_) = error_handel.send(ErrorOperation::PrintAndChangeLedError(APP_NAME.to_string(),"error while parsing the json, retrying next cycle".to_string(), RGB::ERROR(), WARNGING_ORANGE, error_handeler::LedNumber::LED2)){
                 return PricingError::ErrorThreadDown("error while parsing the json, retrying next cycle".to_string());
             }
             PricingError::NonFatal
         },
         PricingError::JSONFormatError(message) => {
-            if let Err(_) = error_handel.send(ErrorOperation::Print(APP_NAME.to_string(),format!("error while parsing the json, retrying next cycle\n{message}"), RGB::ERROR())){
+            if let Err(_) = error_handel.send(ErrorOperation::PrintAndChangeLedError(APP_NAME.to_string(),format!("error while parsing the json, retrying next cycle\n{message}"), RGB::ERROR(), WARNGING_ORANGE, error_handeler::LedNumber::LED2)){
                 return PricingError::ErrorThreadDown(format!("error while parsing the json, retrying next cycle\n{message}"));
             }
             PricingError::NonFatal
@@ -248,7 +251,7 @@ fn get_data_from_api(error_handel: &Sender<ErrorOperation>, context: &Context)->
     })?;
 
     if !json_data.success {
-        if let Err(_) = error_handel.send(ErrorOperation::Print(APP_NAME.to_string(),"JSON had an unexpected error, retrying next cycle".to_string(), RGB::ERROR())){
+        if let Err(_) = error_handel.send(ErrorOperation::PrintAndChangeLedError(APP_NAME.to_string(),"JSON had an unexpected error, retrying next cycle".to_string(), RGB::ERROR(), WARNGING_ORANGE, error_handeler::LedNumber::LED2)){
             return Err(PricingError::ErrorThreadDown("JSON had an unexpected error, retrying next cycle".to_string()));
         }
         return Err(PricingError::NonFatal);
@@ -271,7 +274,7 @@ fn update_index_database(json_data: &BzData, context: &mut Context, error_handel
     .collect();
 
     if data_base_manager::try_write_database(&mut context.conn, hypixel_ids, &context.lookup_table_name, "HypixelID")? > 0 {
-        if let Err(_) = error_handel.send(ErrorOperation::NonErrorPrint(APP_NAME.to_string(),"new item added to the database, requires manual naming.".to_string(), RGB::INFO())){
+        if let Err(_) = error_handel.send(ErrorOperation::PrintAndChangeLed(APP_NAME.to_string(),"new item added to the database, requires manual naming.".to_string(), RGB::INFO(), RGB::MAGENTA(), error_handeler::LedNumber::LED2)){
             return Err(PricingError::ErrorThreadDown("new item added to the database, requires manual naming.".to_string()));
         }
     };
@@ -324,7 +327,7 @@ fn write_database(context: &mut Context, json_data: BzData, error_handel: &Sende
                 })
             },
             Err(e) => {
-                if let Err(_) = error_handel.send(ErrorOperation::Print(APP_NAME.to_string(), format!("couldn't read product id \"{}\" from database\nError: {}", value.product_id, e), RGB::ERROR())){
+                if let Err(_) = error_handel.send(ErrorOperation::PrintAndChangeLedError(APP_NAME.to_string(), format!("couldn't read product id \"{}\" from database\nError: {}", value.product_id, e), RGB::ERROR(), RGB::ERROR(), error_handeler::LedNumber::LED2)){
                     error_send_failed = true;
                     error_message.push(format!("couldn't read product id \"{}\" from database\nError: {}", value.product_id, e));
                 }
