@@ -1,5 +1,6 @@
 use std::io::Write;
-
+mod input;
+use input::Input;
 
 pub struct ReactiveInput{
     buffer: String,
@@ -7,6 +8,7 @@ pub struct ReactiveInput{
     history: Vec<String>,
     setting: Setting,
     history_index: usize,
+    inputs: Input,
 }
 
 pub struct Setting{
@@ -17,29 +19,27 @@ pub struct Setting{
 
 impl ReactiveInput{
     pub fn new() -> Self {
-        Self {
-            buffer: String::new(),
-            cursor_pos: 0,
-            history: Vec::new(),
-            setting: Setting {
-                history_capt: false,
-                max_history_size: 100,
-                auto_add_history: false,
-            },
-            history_index: 0,
-        }
+      Self::internal_new( Setting {
+        history_capt: false,
+        max_history_size: 100,
+        auto_add_history: false,
+        })
     }
     pub fn with_setting(setting: Setting) -> Self {
         if(setting.history_capt){
-            Self {
-                buffer: String::new(),
-                cursor_pos: 0,
-                history: Vec::with_capacity(setting.max_history_size),
-                setting,
-                history_index: 0,
-            }
+            Self::internal_new(setting)
         } else {
             Self::new()
+        }
+    }
+
+    fn internal_new(setting: Setting) -> Self {
+        Self {
+            buffer: String::new(),
+            cursor_pos: 0,
+            history: Vec::with_capacity(setting.max_history_size),
+            setting,
+            history_index: 0,
         }
     }
     pub fn add_to_history(&mut self, command: String) {
