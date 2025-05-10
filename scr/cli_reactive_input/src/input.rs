@@ -26,12 +26,22 @@ use winapi::um::processenv::*;
 use winapi::um::fileapi::*;
 #[cfg(windows)]
 use winapi::shared::minwindef::*;
+#[cfg(windows)]
 use winapi::um::winnt::HANDLE;
 #[cfg(windows)]
+use winapi::um::synchapi::WaitForMultipleObjects;
+#[cfg(windows)]
 use std::ptr::null_mut;
+#[cfg(windows)]
+use std::os::windows::io::AsRawHandle;
 
 #[cfg(windows)]
 use winapi::um::namedpipeapi::CreatePipe;
+
+pub enum InputEvent {
+    Input(char),
+    Interrupt(String),
+}
 
 pub struct Input {
     #[cfg(unix)]
@@ -114,7 +124,7 @@ impl Input {
                         pipe_read: File::from_raw_handle(read_pipe as *mut std::ffi::c_void),
                     },
                     Interrupter {
-                        pipe_write: File::from_raw_handle(read_pipe as *mut std::ffi::c_void),
+                        pipe_write: File::from_raw_handle(write_pipe as *mut std::ffi::c_void),
                     },
                 ))
             }
@@ -143,9 +153,9 @@ impl Input {
         #[cfg(windows)]
         {
             let mut buf = [0; 1];
-            let mut bytes_read = 0;
+            let mut bytes_read: DWORD = 0;
             let ret: BOOL = unsafe {
-                ReadFile(self.stdin_handle, buf.as_mut_ptr() as *mut _,1, bytes_read as LPDWORD, null_mut() as *mut OVERLAPPED)
+                ReadFile(self.stdin_handle, buf.as_mut_ptr() as *mut _,1, &mut bytes_read, null_mut() as *mut OVERLAPPED)
             };
             if ret != 0 {
                 Ok(buf[0])
@@ -154,6 +164,63 @@ impl Input {
             }
         }
     }
+
+    #[cfg(unix)]
+pub fn wait(&mut self) -> io::Result<InputEvent> {
+    let mut fds = [
+        libc::pollfd { fd: self.stdin_fd, events: libc::POLLIN, revents: 0 },
+        libc::pollfd { fd: self.pipe_read, events: libc::POLLIN, revents: 0 },
+    ];
+
+    let ret = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as u64, -1) };
+    if ret < 0 {
+        return Err(io::Error::last_os_error());
+    }
+
+    for fd in &fds {
+        if fd.revents & libc::POLLIN != 0 {
+            if fd.fd == self.stdin_fd {
+                // stdin is ready
+                Ok(InputEvent::Input(self.read_next_input()? as char))
+            } else if fd.fd == self.pipe_read {
+                // pipe is ready
+                let mut buf = [0; 40];
+                self.read_pipe(&mut buf);
+                Ok(InputEvent::Interrupt(String::from_utf8_lossy(&buf).to_string()))
+            }
+        }
+    }
+
+    Err(io::Error::new(io::ErrorKind::Other, "Unknown event"))
+}
+
+#[cfg(windows)]
+pub fn wait(&mut self) -> io::Result<InputEvent> {
+    let handles = [self.stdin_handle, self.pipe_read.as_raw_handle() as HANDLE];
+
+    let ret = unsafe { WaitForMultipleObjects(
+        handles.len() as u32,
+        handles.as_ptr(),
+        0,  // wait for any
+        winapi::um::winbase::INFINITE
+    ) };
+
+    const WAIT_STDIN: u32 = winapi::um::winbase::WAIT_OBJECT_0;
+    const WAIT_PIPE: u32 = winapi::um::winbase::WAIT_OBJECT_0 + 1;
+    match ret {
+        WAIT_STDIN => {
+            // stdin is ready
+            Ok(InputEvent::Input(self.read_next_input()? as char))
+        },
+        WAIT_PIPE => {
+            // pipe is ready
+            let mut buf = [0; 40];
+            self.read_pipe(&mut buf);
+            Ok(InputEvent::Interrupt(String::from_utf8_lossy(&buf).to_string()))
+        },
+        _ => Err(io::Error::last_os_error()),
+    }
+}
 }
 
 #[cfg(windows)]
@@ -216,3 +283,8 @@ impl Drop for Interrupter {
         }
     }
 }
+
+
+//TODO error handling check
+//TODO check on linux
+//TODO check if arow key is one byte or other keys that can be used and change acordingly
