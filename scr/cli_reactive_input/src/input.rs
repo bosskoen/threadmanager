@@ -1,6 +1,7 @@
 use std::io::{self, Read, Write};
 #[cfg(unix)]
 use std::os::unix::io::{AsRawFd, RawFd};
+#[cfg(windows)]
 use std::os::windows::io::FromRawHandle;
 #[cfg(windows)]
 use std::fs::File;
@@ -54,6 +55,8 @@ pub struct Input {
     orig_termios: Termios,
     #[cfg(unix)]
     pipe_read: RawFd,
+    #[cfg(unix)]
+    old_flags: i32,
 
     #[cfg(windows)]
     stdin_handle: HANDLE,
@@ -75,10 +78,14 @@ impl Input {
     pub fn new() -> io::Result<(Self, Interrupter)> {
         #[cfg(unix)]
         {
+            use nix::fcntl::{fcntl, FcntlArg, OFlag};
+
             let stdin_fd = io::stdin().as_raw_fd();
 
             // Save current termios
             let orig_termios = tcgetattr(stdin_fd)?;
+            let flags = fcntl(stdin_fd, FcntlArg::F_GETFL)?; // get current flags
+            fcntl(stdin_fd, FcntlArg::F_SETFL(OFlag::from_bits_truncate(flags) | OFlag::O_NONBLOCK))?;
             let mut raw = orig_termios.clone();
             cfmakeraw(&mut raw);
             tcsetattr(stdin_fd, TCSANOW, &raw)?;
@@ -90,6 +97,7 @@ impl Input {
                     stdin_fd,
                     orig_termios,
                     pipe_read: read_fd,
+                    old_flags: flags,
                 },
                 Interrupter { pipe_write: write_fd },
             ))
@@ -139,7 +147,7 @@ impl Input {
     }
 
     /// Read form the pipe
-    pub fn read_pipe(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+    fn read_pipe(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         #[cfg(unix)]
         {
             read(self.pipe_read, buf).map_err(|e| io::Error::from_raw_os_error(e as i32))
@@ -152,33 +160,44 @@ impl Input {
     }
 
     /// Read a single byte from stdin
-    pub fn read_byte_stdin(&mut self) -> io::Result<Option<u8>> {
+    fn read_byte_stdin(&mut self) -> io::Result<Option<u8>> {
         #[cfg(unix)]
         {
             let mut buf = [0; 1];
-            let bytes_read = read(self.stdin_fd, &mut buf).map_err(|e| io::Error::from_raw_os_error(e as i32))?;
-            if(bytes_read == 0) {
-                Ok(None)
-            }else{
-                Ok(Some(buf[0]))
-            }
+            match read(self.stdin_fd, &mut buf) {
+            Ok(0) => Ok(None), // EOF
+            Ok(_) => Ok(Some(buf[0])),
+            Err(e) if e as i32 == libc::EAGAIN || e as i32 == libc::EWOULDBLOCK => Ok(None), // no data ready
+            Err(e) => Err(io::Error::from_raw_os_error(e as i32)),
+        }
         }
 
         #[cfg(windows)]
         {
-            let mut buf = [0; 1];
-            let mut bytes_read: DWORD = 0;
-            let ret: BOOL = unsafe {
-                ReadFile(self.stdin_handle, buf.as_mut_ptr() as *mut _,1, &mut bytes_read, null_mut() as *mut OVERLAPPED)
-            };
-            if ret != 0 {
-                if bytes_read == 0 {
-                    return Ok(None);
-                }else{
-                    Ok(Some(buf[0]))
+            let mut record = [unsafe { std::mem::zeroed::<INPUT_RECORD>() }; 1];
+            let mut events_read = 0;
+             let ret = unsafe { PeekConsoleInputW(self.stdin_handle, record.as_mut_ptr(), 1, &mut events_read) };
+            if ret == 0 {
+                return Err(io::Error::last_os_error());
+            }
+
+            if events_read > 0 {
+                let mut buf = [0; 1];
+                let mut bytes_read: DWORD = 0;
+                let ret: BOOL = unsafe {
+                    ReadFile(self.stdin_handle, buf.as_mut_ptr() as *mut _,1, &mut bytes_read, null_mut() as *mut OVERLAPPED)
+                };
+                if ret != 0 {
+                    if bytes_read == 0 {
+                        return Ok(None);
+                    }else{
+                        Ok(Some(buf[0]))
+                    }
+                } else {
+                    Err(io::Error::last_os_error())
                 }
-            } else {
-                Err(io::Error::last_os_error())
+            }else{
+                Ok(None)
             }
         }
     }
@@ -207,7 +226,7 @@ impl Input {
                     // pipe is ready
                     let mut buf = [0; 40];
                     self.read_pipe(&mut buf);
-                    Ok(InputEvent::Interrupt(String::from_utf8_lossy(&buf).to_string()))
+                    return Ok(InputEvent::Interrupt(String::from_utf8_lossy(&buf).to_string()));
                 }
             }
         }
@@ -304,7 +323,9 @@ fn parce_key(&mut self) -> io::Result<Key>{
                         }
                     }
                 }
-}
+}//TODO see if this can be improved through looking stdin isnt beign written to, i.e.d. if bytes are comming but arnt in the buffer and you read a empty buffer and tink unknown key, but the bytes ant in the buffer yet
+//poll with a realy small timeout
+
 
 #[cfg(windows)]
     /// Wait for input from stdin or the pipe
@@ -373,6 +394,7 @@ impl Drop for Input {
         #[cfg(unix)]
         {
             let _ = tcsetattr(self.stdin_fd, TCSANOW, &self.orig_termios);
+            let _ = fcntl(self.stdin_fd, FcntlArg::F_SETFL(OFlag::from_bits_truncate(self.old_flags)));
             let _ = close(self.pipe_read);
         }
 

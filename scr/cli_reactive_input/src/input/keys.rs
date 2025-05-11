@@ -21,3 +21,5 @@ pub enum Key {
 
     // Function keys
 }
+
+//TODO control L

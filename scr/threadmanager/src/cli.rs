@@ -12,7 +12,7 @@ pub fn initialise_cli() -> HashMap<&'static str, Box<dyn Fn(&[&str], &mut Manage
     cli.insert("status", Box::new(get_status) as Box<dyn Fn(&[&str], &mut Manager)>);
     cli.insert("list", Box::new(list_apps) as Box<dyn Fn(&[&str], &mut Manager)>);
     cli.insert("help", Box::new(help) as Box<dyn Fn(&[&str], &mut Manager)>);
-    cli.insert("setting", Box::new(settings) as Box<dyn Fn(&[&str], &mut Manager)>);
+    cli.insert("settings", Box::new(settings) as Box<dyn Fn(&[&str], &mut Manager)>);
     cli.insert("led", Box::new(led) as Box<dyn Fn(&[&str], &mut Manager)>);
 
     cli
