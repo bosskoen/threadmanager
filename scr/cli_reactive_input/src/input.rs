@@ -15,6 +15,7 @@ use termios::*;
 use winapi::um::consoleapi::*;
 #[cfg(windows)]
 use winapi::um::handleapi::*;
+#[cfg(windows)]
 use winapi::um::minwinbase::OVERLAPPED;
 #[cfg(windows)]
 use winapi::um::winbase::*;
@@ -38,8 +39,11 @@ use std::os::windows::io::AsRawHandle;
 #[cfg(windows)]
 use winapi::um::namedpipeapi::CreatePipe;
 
+mod keys;
+pub use keys::Key;
+
 pub enum InputEvent {
-    Input(char),
+    Input(Key),
     Interrupt(String),
 }
 
@@ -104,10 +108,13 @@ impl Input {
                     return Err(io::Error::last_os_error());
                 }
 
+                const ENABLE_VIRTUAL_TERMINAL_INPUT: DWORD = 0x0200;
+
                 // Save original mode and set raw mode
                 let orig_mode = mode;
                 let raw_mode = mode & !(ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT);
-                if SetConsoleMode(stdin_handle, raw_mode) == 0 {
+                let vt_mode = raw_mode | ENABLE_VIRTUAL_TERMINAL_INPUT;
+                if SetConsoleMode(stdin_handle, vt_mode) == 0 {
                     return Err(io::Error::last_os_error());
                 }
 
@@ -131,6 +138,7 @@ impl Input {
         }
     }
 
+    /// Read form the pipe
     pub fn read_pipe(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         #[cfg(unix)]
         {
@@ -142,12 +150,18 @@ impl Input {
             self.pipe_read.read(buf)
         }
     }
-    pub fn read_next_input(&mut self) -> io::Result<u8> {
+
+    /// Read a single byte from stdin
+    pub fn read_byte_stdin(&mut self) -> io::Result<Option<u8>> {
         #[cfg(unix)]
         {
             let mut buf = [0; 1];
-            read(self.stdin_fd, &mut buf).map_err(|e| io::Error::from_raw_os_error(e as i32))?;
-            Ok(buf[0])
+            let bytes_read = read(self.stdin_fd, &mut buf).map_err(|e| io::Error::from_raw_os_error(e as i32))?;
+            if(bytes_read == 0) {
+                Ok(None)
+            }else{
+                Ok(Some(buf[0]))
+            }
         }
 
         #[cfg(windows)]
@@ -158,7 +172,11 @@ impl Input {
                 ReadFile(self.stdin_handle, buf.as_mut_ptr() as *mut _,1, &mut bytes_read, null_mut() as *mut OVERLAPPED)
             };
             if ret != 0 {
-                Ok(buf[0])
+                if bytes_read == 0 {
+                    return Ok(None);
+                }else{
+                    Ok(Some(buf[0]))
+                }
             } else {
                 Err(io::Error::last_os_error())
             }
@@ -166,36 +184,134 @@ impl Input {
     }
 
     #[cfg(unix)]
-pub fn wait(&mut self) -> io::Result<InputEvent> {
-    let mut fds = [
-        libc::pollfd { fd: self.stdin_fd, events: libc::POLLIN, revents: 0 },
-        libc::pollfd { fd: self.pipe_read, events: libc::POLLIN, revents: 0 },
-    ];
+    /// Wait for input from stdin or the pipe
+    /// Returns the input event
+    /// If the input is from stdin, it returns the key
+    /// If the input is from the pipe, it returns the interrupt
+    pub fn get_next_signal(&mut self) -> io::Result<InputEvent> {
+        let mut fds = [
+            libc::pollfd { fd: self.stdin_fd, events: libc::POLLIN, revents: 0 },
+            libc::pollfd { fd: self.pipe_read, events: libc::POLLIN, revents: 0 },
+        ];
 
-    let ret = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as u64, -1) };
-    if ret < 0 {
-        return Err(io::Error::last_os_error());
-    }
+        let ret = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as u64, -1) };
+        if ret < 0 {
+            return Err(io::Error::last_os_error());
+        }
 
-    for fd in &fds {
-        if fd.revents & libc::POLLIN != 0 {
-            if fd.fd == self.stdin_fd {
-                // stdin is ready
-                Ok(InputEvent::Input(self.read_next_input()? as char))
-            } else if fd.fd == self.pipe_read {
-                // pipe is ready
-                let mut buf = [0; 40];
-                self.read_pipe(&mut buf);
-                Ok(InputEvent::Interrupt(String::from_utf8_lossy(&buf).to_string()))
+        for fd in &fds {
+            if fd.revents & libc::POLLIN != 0 {
+                if fd.fd == self.stdin_fd {
+                    return Ok(InputEvent::Input(self.parce_key()?));
+                } else if fd.fd == self.pipe_read {
+                    // pipe is ready
+                    let mut buf = [0; 40];
+                    self.read_pipe(&mut buf);
+                    Ok(InputEvent::Interrupt(String::from_utf8_lossy(&buf).to_string()))
+                }
             }
         }
+
+        Err(io::Error::new(io::ErrorKind::Other, "Unknown event"))
     }
 
-    Err(io::Error::new(io::ErrorKind::Other, "Unknown event"))
+fn parce_key(&mut self) -> io::Result<Key>{
+                    let first_byte = self.read_byte_stdin()?.unwrap();
+                match first_byte {
+                    0x0D => return Ok(Key::Enter),
+                    0x0A => return Ok(Key::Enter),
+                    0x09 => return Ok(Key::Tab),
+                    0x7F => return Ok(Key::Backspace),
+                    0x08 => return Ok(Key::Backspace),
+                    0x03 => return Ok(Key::CtrlC),
+                    0x04 => return Ok(Key::CtrlD),
+                    0x1B =>{
+                        if let Some(second_byte) = self.read_byte_stdin()?{
+                            if second_byte == 0x5B{
+                                if let Some(third_byte) = self.read_byte_stdin()?{
+                                    match third_byte {
+                                        0x41 => return Ok(Key::ArrowUp),
+                                        0x42 => return Ok(Key::ArrowDown),
+                                        0x43 => return Ok(Key::ArrowRight),
+                                        0x44 => return Ok(Key::ArrowLeft),
+                                        0x48 => return Ok(Key::Home),
+                                        0x46 => return Ok(Key::End),
+                                        0x33 => {
+                                            if let Some(fourth_byte) = self.read_byte_stdin()?{
+                                                if fourth_byte == 0x7E{
+                                                    return Ok(Key::Delete);
+                                                }else{
+                                                    return Ok(Key::Unknown);
+                                                }
+                                            }else{
+                                                return Ok(Key::Unknown);
+                                            }
+                                        },
+                                        0x31 => {
+                                            if let Some(fourth_byte) = self.read_byte_stdin()?{
+                                                if fourth_byte == 0x7E{
+                                                    return Ok(Key::Home);
+                                                }else{
+                                                    return Ok(Key::Unknown);
+                                                }
+                                            }else{
+                                                return Ok(Key::Unknown);
+                                            }
+                                        },
+                                        0x34 => {
+                                            if let Some(fourth_byte) = self.read_byte_stdin()?{
+                                                if fourth_byte == 0x7E{
+                                                    return Ok(Key::End);
+                                                }else{
+                                                    return Ok(Key::Unknown);
+                                                }
+                                            }else{
+                                                return Ok(Key::Unknown);
+                                            }
+                                        },
+                                        _ => {return Ok(Key::Unknown);}
+                                    }
+                                }else{
+                                    return Ok(Key::Unknown);
+                                }
+                            }else if second_byte == 0x4F{
+                                if let Some(third_byte) = self.read_byte_stdin()?{
+                                    match third_byte {
+                                        0x41 => return Ok(Key::ArrowUp),
+                                        0x42 => return Ok(Key::ArrowDown),
+                                        0x43 => return Ok(Key::ArrowRight),
+                                        0x44 => return Ok(Key::ArrowLeft),
+                                        0x48 => return Ok(Key::Home),
+                                        0x46 => return Ok(Key::End),
+                                        _ => {return Ok(Key::Unknown);}
+                                    }
+                                } else{
+                                    return Ok(Key::Unknown);
+                                }
+                            }else{
+                                return Ok(Key::Unknown);
+                            }
+                        }else{
+                            return Ok(Key::Escape);
+                        }
+                    },
+                    _ => {
+                        
+                        if first_byte >= 0x20 && first_byte <= 0x7E{
+                            return Ok(Key::Char(first_byte as char));
+                        }else{
+                            return Ok(Key::Unknown);
+                        }
+                    }
+                }
 }
 
 #[cfg(windows)]
-pub fn wait(&mut self) -> io::Result<InputEvent> {
+    /// Wait for input from stdin or the pipe
+    /// Returns the input event
+    /// If the input is from stdin, it returns the key
+    /// If the input is from the pipe, it returns the interrupt
+pub fn get_next_signal(&mut self) -> io::Result<InputEvent> {
     let handles = [self.stdin_handle, self.pipe_read.as_raw_handle() as HANDLE];
 
     let ret = unsafe { WaitForMultipleObjects(
@@ -210,7 +326,7 @@ pub fn wait(&mut self) -> io::Result<InputEvent> {
     match ret {
         WAIT_STDIN => {
             // stdin is ready
-            Ok(InputEvent::Input(self.read_next_input()? as char))
+            return Ok(InputEvent::Input(self.parce_key()?));
         },
         WAIT_PIPE => {
             // pipe is ready
@@ -287,4 +403,5 @@ impl Drop for Interrupter {
 
 //TODO error handling check
 //TODO check on linux
-//TODO check if arow key is one byte or other keys that can be used and change acordingly
+//TODO cleanup
+
