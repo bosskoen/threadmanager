@@ -1,116 +1,326 @@
-use std::io::Write;
+use std::{
+    error::Error,
+    fmt::Display,
+    io::{stdout, Write},
+};
+mod history;
 mod input;
+use history::{History, HistorySettings};
 use input::{Input, InputEvent, Interrupter};
 
-pub struct ReactiveInput{
+pub struct ReactiveInput {
     buffer: String,
     cursor_pos: usize,
     history: History,
     setting: Setting,
     inputs: Input,
-    interrupter: Interrupter
+
+    completer: Option<Box<dyn Completer>>,
+    auto_completes: Vec<String>,
 }
 
-struct History{
-    history_list: Vec<String>,
-    history_index: usize,
-}
-
-pub struct Setting{
+pub struct Setting {
     history_capt: bool,
     max_history_size: usize,
     auto_add_history: bool,
+
+    handle_control_signals: bool,
 }
 
-pub enum ReadlineResult{
+pub trait Completer {
+    fn complete(&self, input: &str, corsor: usize) -> Vec<String>;
+}
+
+pub struct StaticCompleter {}
+impl Completer for StaticCompleter {
+    fn complete(&self, input: &str, corsor: usize) -> Vec<String> {
+        vec!["help".to_string()]
+            .into_iter()
+            .filter(|cmd| cmd.starts_with(input))
+            .collect()
+    }
+}
+pub enum ReadlineResult {
     Output(String),
-    Eof,    // Ctrl-D
-    Interrupted // Ctrl-C
+    Eof,         // Ctrl-D
+    Interrupted, // Ctrl-C
 }
 
-impl ReactiveInput{
-    pub fn new() ->  (Self , Interrupter) {
-      Self::internal_new( Setting {
-        history_capt: false,
-        max_history_size: 100,
-        auto_add_history: false,
-        })
+impl ReactiveInput {
+    pub fn new() -> (Self, Interrupter) {
+        Self::internal_new(Setting::new(), None)
     }
-    pub fn with_setting(setting: Setting) ->  (Self , Interrupter) {
-        if(setting.history_capt){
-            Self::internal_new(setting)
-        } else {
-            Self::new()
-        }
+    pub fn with_setting(setting: Setting) -> (Self, Interrupter) {
+        Self::internal_new(setting, None)
     }
-
-    fn internal_new(setting: Setting) -> (Self , Interrupter) {
-        let (inputs, interrupter) = Input::new().unwrap();
-        (Self {
-            buffer: String::new(),
-            cursor_pos: 0,
-            history: History {
-                history_list: Vec::with_capacity(setting.max_history_size),
-                history_index: 0,
+    pub fn with_completer<Cmpl: Completer + 'static>(completer: Cmpl) -> (Self, Interrupter) {
+        Self::internal_new(Setting::new(), Some(Box::new(completer)))
+    }
+    pub fn with_setting_and_completer<Cmpl: Completer + 'static>(
+        setting: Setting,
+        completer: Cmpl,
+    ) -> (Self, Interrupter) {
+        Self::internal_new(setting, Some(Box::new(completer)))
+    }
+    fn internal_new(
+        setting: Setting,
+        completer: Option<Box<dyn Completer>>,
+    ) -> (Self, Interrupter) {
+        let (inputs, interrupter) = Input::new(setting.handle_control_signals).unwrap();
+        (
+            Self {
+                buffer: String::new(),
+                cursor_pos: 0,
+                history: History::new(HistorySettings {
+                    is_capped: setting.history_capt,
+                    capacity: setting.max_history_size,
+                }),
+                setting,
+                inputs,
+                completer: completer,
+                auto_completes: Vec::new(),
             },
-            setting,
-            inputs,
-            interrupter : interrupter.clone(),
-        } , interrupter)
+            interrupter,
+        )
+    }
+    pub fn set_completer<Cmpl: Completer + 'static>(&mut self, completer: Cmpl){
+        self.completer = Some(Box::new(completer));
+    }
+    pub fn remove_completer(&mut self){
+        self.completer = None
+    }
+    pub fn set_setting(&mut self, setting: Setting) {
+        self.setting = setting;
+
+        self.inputs
+            .set_handle_contorl_signal(self.setting.handle_control_signals);
+        self.history.set_setting(HistorySettings {
+            is_capped: self.setting.history_capt,
+            capacity: self.setting.max_history_size,
+        });
     }
     pub fn add_to_history(&mut self, command: String) {
-        if self.setting.history_capt {
-            if(self.history.history_list.len() >= self.setting.max_history_size) {
-                self.history.history_list[self.history.history_index] = command;
-            }else{
-                self.history.history_list.push(command);
-            }
-            self.history.history_index += 1;
-            self.history.history_index %= self.setting.max_history_size;
-        }else{
-            self.history.history_list.push(command);
-            self.history.history_index += 1;
-        }
+        self.history.add_to_history(command);
     }
-    pub fn readline(&mut self, input: &str) -> ReadlineResult{
-        self.buffer.clear();
-        self.cursor_pos = 0;
-        std::io::stdout().write(input.as_bytes());
-        std::io::stdout().flush();
 
-        loop{
-            if let InputEvent::Input(key) = self.inputs.get_next_signal().unwrap(){
-                match key {
-                    input::Key::Char(_) => todo!(),
-                    input::Key::Enter => break,
-                    input::Key::Tab => todo!(),
-                    input::Key::Backspace => todo!(),
-                    input::Key::Escape => todo!(),
-                    input::Key::Delete => todo!(),
-                    input::Key::Home => todo!(),
-                    input::Key::End => todo!(),
-                    input::Key::ArrowUp => todo!(),
-                    input::Key::ArrowDown => todo!(),
-                    input::Key::ArrowLeft => todo!(),
-                    input::Key::ArrowRight => todo!(),
-                    input::Key::CtrlC => return ReadlineResult::Interrupted ,
-                    input::Key::CtrlD => return ReadlineResult::Eof,
-                    input::Key::Unknown => todo!(),
+    pub fn readline(&mut self, input: &str) -> Result<ReadlineResult, ReadlineError> {
+        self.buffer.clear();
+        let mut scratch_buffer = None;
+        self.cursor_pos = 0;
+        let mut re_run_completer = true;
+
+        std::io::stdout().write(input.as_bytes());
+        std::io::stdout().flush().unwrap();
+
+        loop {
+            match self.inputs.get_next_signal() {
+                Ok(x) => {
+                    if let InputEvent::Input(key) = x {
+                        std::io::stdout().flush().unwrap();
+                        match key {
+                            input::Key::Char(char) => {
+                                if scratch_buffer.is_some() {
+                                    scratch_buffer = None; // Exit history mode
+                                }
+                                self.buffer.insert(self.cursor_pos, char);
+                                self.cursor_pos += 1;
+                                self.redraw_line(input);
+                                re_run_completer = true;
+                            }
+                            input::Key::Enter => {
+                                println!("");
+                                self.auto_completes.clear();
+                                break;
+                            }
+                            input::Key::Tab => todo!(),  //TODO run completer
+                            input::Key::ShiftTab => todo!(),
+                            input::Key::Backspace => {
+                                if (self.cursor_pos != 0) {
+                                    self.buffer.remove(self.cursor_pos - 1);
+                                    self.cursor_pos -= 1;
+                                    self.redraw_line(input);
+                                    re_run_completer = true;
+                                }
+                            }
+                            input::Key::Escape => {
+                                self.buffer.clear();
+                                scratch_buffer = None;
+                                self.history.set_to_begining();
+                                self.cursor_pos = 0;
+                                re_run_completer = true;
+                                self.redraw_line(input);
+                            },
+                            input::Key::Delete => {
+                                if (self.cursor_pos < self.buffer.len()) {
+                                    self.buffer.remove(self.cursor_pos);
+                                    self.redraw_line(input);
+                                    re_run_completer = true;
+                                }
+                            }
+                            input::Key::Home => {
+                                print!("\r");
+                                self.cursor_pos = 0;
+                                stdout().flush();
+                                re_run_completer = true;
+                            }
+                            input::Key::End => {
+                                print!("\r\x1B[{}C", self.buffer.len() + input.len());
+                                self.cursor_pos = self.buffer.len();
+                                stdout().flush();
+                                re_run_completer = true;
+                            }
+                            input::Key::ArrowUp => {
+                                if scratch_buffer.is_none() {
+                                    scratch_buffer = Some(self.buffer.clone());
+                                }
+                                if let Some(entry) = self.history.previous() {
+                                    self.buffer = entry;
+                                    self.cursor_pos = self.buffer.len();
+                                    self.redraw_line(input);
+                                }
+                                re_run_completer = true;
+                            }
+                            input::Key::ArrowDown => {
+                                if let Some(entry) = self.history.next() {
+                                    self.buffer = entry;
+                                } else if let Some(original) = scratch_buffer.take() {
+                                    self.buffer = original;
+                                } // else stay on current buffer
+                                self.cursor_pos = self.buffer.len();
+                                self.redraw_line(input);
+                                re_run_completer = true;
+                            }
+                            input::Key::ArrowLeft => {
+                                if self.cursor_pos > 0 {
+                                    self.cursor_pos -= 1;
+                                    print!("\x1B[1D");
+                                    std::io::stdout().flush();
+                                    re_run_completer = true;
+                                }
+                            }
+                            input::Key::ArrowRight => {
+                                if self.cursor_pos < self.buffer.len() {
+                                    self.cursor_pos += 1;
+                                    print!("\x1B[1C");
+                                    std::io::stdout().flush();
+                                    re_run_completer = true;
+                                }
+                            }
+                            input::Key::CtrlC => return Ok(ReadlineResult::Interrupted),
+                            input::Key::CtrlD => return Ok(ReadlineResult::Eof),
+                            input::Key::Unknown => todo!(),
+                        }
+                    } else {
+                        //redraw
+                        print!("interrupted");
+                        std::io::stdout().flush().unwrap();
+                    }
                 }
-            }else{
-                //redraw
+                Err(e) => println!("Error: {}", e),
             }
         }
 
         if self.setting.auto_add_history {
             self.add_to_history(self.buffer.clone());
         }
-        ReadlineResult::Output(self.buffer.clone())
+
+        Ok(ReadlineResult::Output(self.buffer.clone()))
     }
 
-
+    fn redraw_line(&self, input_char: &str) {
+        print!(
+            "\x1B[2K\r{}{}\r\x1B[{}C",
+            input_char,
+            self.buffer,
+            self.cursor_pos + input_char.len()
+        );
+        stdout().flush();
+    }
 }
 
+impl Setting {
+    pub fn new() -> Self {
+        Self {
+            history_capt: false,
+            max_history_size: 100,
+            auto_add_history: false,
+            handle_control_signals: true,
+        }
+    }
+    pub fn from(is_caped: bool, max_size: usize, auto_hist: bool, handle_conrtols: bool) -> Self {
+        Self {
+            history_capt: is_caped,
+            max_history_size: max_size,
+            auto_add_history: auto_hist,
+            handle_control_signals: handle_conrtols,
+        }
+    }
+
+    // Fluent-style setters
+    pub fn set_hist_len(mut self, size: usize) -> Self {
+        self.max_history_size = size;
+        self
+    }
+
+    pub fn change_hist_len(&mut self, size: usize) {
+        self.max_history_size = size;
+    }
+
+    pub fn uncap_hist(mut self) -> Self {
+        self.history_capt = false;
+        self
+    }
+
+    pub fn cap_hist(mut self) -> Self {
+        self.history_capt = true;
+        self
+    }
+
+    pub fn change_hist_cap(&mut self, caped: bool) {
+        self.history_capt = caped;
+    }
+
+    pub fn enable_auto_add_history(mut self) -> Self {
+        self.auto_add_history = true;
+        self
+    }
+
+    pub fn disable_auto_add_history(mut self) -> Self {
+        self.auto_add_history = false;
+        self
+    }
+
+    pub fn set_auto_add_history(&mut self, enabled: bool) {
+        self.auto_add_history = enabled;
+    }
+
+    pub fn enable_signal_handling(mut self) -> Self {
+        self.handle_control_signals = true;
+        self
+    }
+
+    pub fn disable_signal_handling(mut self) -> Self {
+        self.handle_control_signals = false;
+        self
+    }
+
+    pub fn set_signal_handling(&mut self, enabled: bool) {
+        self.handle_control_signals = enabled;
+    }
+}
+#[derive(Debug)]
+pub enum ReadlineError {
+    StdOutError(std::io::Error),
+}
+impl Display for ReadlineError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ReadlineError::StdOutError(e) => write!(f, "StdOutError: {}", e),
+        }
+    }
+}
+
+impl Error for ReadlineError {}
 //TODO set escape key behavior
 
 /* Things I decided my system must do:
@@ -157,7 +367,7 @@ Why I chose poll():
 
 ✅ Works on Unix (Linux, Raspberry Pi), and can have Windows alternative
 
-❌ Requires writing my own line-editing logic (cursor move, history, 
+❌ Requires writing my own line-editing logic (cursor move, history,
 
 
  Things I haven't fully decided yet:

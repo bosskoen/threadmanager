@@ -2,6 +2,7 @@ pub enum Key {
     Char(char),      // Normal printable character
     Enter,           // Enter/Return key            0x0D   // 0x0A
     Tab,             // Tab key                     0x09        
+    ShiftTab,        // esc [ Z                     0x1B 0x5B 0x5A
     Backspace,       // Backspace key               0x7F   // 0x08 
     Escape,          // Escape key (alone)          0x1B
 
@@ -22,4 +23,4 @@ pub enum Key {
     // Function keys
 }
 
-//TODO control L
+//TODO control

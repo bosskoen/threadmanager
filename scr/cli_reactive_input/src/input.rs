@@ -5,6 +5,8 @@ use std::os::unix::io::{AsRawFd, RawFd};
 use std::os::windows::io::FromRawHandle;
 #[cfg(windows)]
 use std::fs::File;
+use std::ptr::null;
+use std::sync::Arc;
 
 #[cfg(unix)]
 use nix::unistd::{pipe, read, write, close};
@@ -18,6 +20,9 @@ use winapi::um::consoleapi::*;
 use winapi::um::handleapi::*;
 #[cfg(windows)]
 use winapi::um::minwinbase::OVERLAPPED;
+use winapi::um::synchapi::CreateEventW;
+use winapi::um::synchapi::ResetEvent;
+use winapi::um::synchapi::SetEvent;
 #[cfg(windows)]
 use winapi::um::winbase::*;
 #[cfg(windows)]
@@ -45,8 +50,11 @@ pub use keys::Key;
 
 pub enum InputEvent {
     Input(Key),
-    Interrupt(String),
+    Interrupt(),
 }
+
+#[cfg(windows)]
+struct ManualResetEvent(HANDLE);
 
 pub struct Input {
     #[cfg(unix)]
@@ -63,7 +71,7 @@ pub struct Input {
     #[cfg(windows)]
     orig_mode: DWORD,
     #[cfg(windows)]
-    pipe_read: File,
+    interupt_event: Arc<ManualResetEvent>,
 }
 
 pub struct Interrupter {
@@ -71,11 +79,11 @@ pub struct Interrupter {
     pipe_write: RawFd,
 
     #[cfg(windows)]
-    pipe_write: File,
+    interupt_event: Arc<ManualResetEvent>,
 }
 
 impl Input {
-    pub fn new() -> io::Result<(Self, Interrupter)> {
+    pub fn new(enable_control_signal_handeling: bool) -> io::Result<(Self, Interrupter)> {
         #[cfg(unix)]
         {
             use nix::fcntl::{fcntl, FcntlArg, OFlag};
@@ -120,43 +128,73 @@ impl Input {
 
                 // Save original mode and set raw mode
                 let orig_mode = mode;
-                let raw_mode = mode & !(ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT);
+                let raw_mode;
+                if enable_control_signal_handeling {
+                    raw_mode = mode & !(ENABLE_PROCESSED_INPUT| ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT);
+                } else {
+                    raw_mode = mode & !(ENABLE_PROCESSED_INPUT | ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT);
+                }
                 let vt_mode = raw_mode | ENABLE_VIRTUAL_TERMINAL_INPUT;
                 if SetConsoleMode(stdin_handle, vt_mode) == 0 {
                     return Err(io::Error::last_os_error());
                 }
 
-                let mut read_pipe = null_mut();
-                let mut write_pipe = null_mut();
-                if CreatePipe(&mut read_pipe, &mut write_pipe, null_mut(), 0) == 0 {
-                    return Err(io::Error::last_os_error());
-                }
+                let interupt_event: HANDLE = CreateEventW(null_mut(), TRUE, FALSE, null());
+                let interupt_event = Arc::new(ManualResetEvent(interupt_event));
+                let intupt_clone = Arc::clone(&interupt_event);
 
                 Ok((
                     Input {
                         stdin_handle,
                         orig_mode,
-                        pipe_read: File::from_raw_handle(read_pipe as *mut std::ffi::c_void),
+                        interupt_event,
                     },
                     Interrupter {
-                        pipe_write: File::from_raw_handle(write_pipe as *mut std::ffi::c_void),
+                        interupt_event: intupt_clone,
                     },
                 ))
             }
         }
     }
 
+    pub fn set_handle_contorl_signal(&mut self, enable: bool)-> io::Result<()>{
+        #[cfg(unix)]
+        {
+          //TODO figer out
+        }
+
+        #[cfg(windows)]
+        {
+            unsafe {
+                let mut mode: DWORD = 0;
+                if GetConsoleMode(self.stdin_handle, &mut mode) == 0 {
+                    return Err(io::Error::last_os_error());
+                }
+                if enable {
+                    mode &= !ENABLE_PROCESSED_INPUT;
+                }else{
+                    mode |= ENABLE_PROCESSED_INPUT;
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Read form the pipe
-    fn read_pipe(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+    fn reset_interupter(&mut self) -> io::Result<()> {
+
         #[cfg(unix)]
         {
             read(self.pipe_read, buf).map_err(|e| io::Error::from_raw_os_error(e as i32))
         }
 
         #[cfg(windows)]
-        {
-            self.pipe_read.read(buf)
+        { 
+            unsafe {
+                ResetEvent(self.interupt_event.0); //TODO error
+            }
         }
+        Ok(())
     }
 
     /// Read a single byte from stdin
@@ -255,6 +293,7 @@ fn parce_key(&mut self) -> io::Result<Key>{
                                         0x44 => return Ok(Key::ArrowLeft),
                                         0x48 => return Ok(Key::Home),
                                         0x46 => return Ok(Key::End),
+                                        0x5A => return Ok(Key::ShiftTab),
                                         0x33 => {
                                             if let Some(fourth_byte) = self.read_byte_stdin()?{
                                                 if fourth_byte == 0x7E{
@@ -333,27 +372,29 @@ fn parce_key(&mut self) -> io::Result<Key>{
     /// If the input is from stdin, it returns the key
     /// If the input is from the pipe, it returns the interrupt
 pub fn get_next_signal(&mut self) -> io::Result<InputEvent> {
-    let handles = [self.stdin_handle, self.pipe_read.as_raw_handle() as HANDLE];
+
+    let handles = [self.stdin_handle, self.interupt_event.0];
 
     let ret = unsafe { WaitForMultipleObjects(
         handles.len() as u32,
         handles.as_ptr(),
-        0,  // wait for any
+        FALSE,  // wait for any
         winapi::um::winbase::INFINITE
     ) };
 
+
     const WAIT_STDIN: u32 = winapi::um::winbase::WAIT_OBJECT_0;
-    const WAIT_PIPE: u32 = winapi::um::winbase::WAIT_OBJECT_0 + 1;
+    const WAIT_EVENT: u32 = winapi::um::winbase::WAIT_OBJECT_0 + 1;
     match ret {
         WAIT_STDIN => {
             // stdin is ready
             return Ok(InputEvent::Input(self.parce_key()?));
         },
-        WAIT_PIPE => {
+        WAIT_EVENT => {
             // pipe is ready
-            let mut buf = [0; 40];
-            self.read_pipe(&mut buf);
-            Ok(InputEvent::Interrupt(String::from_utf8_lossy(&buf).to_string()))
+            self.reset_interupter();
+
+            Ok(InputEvent::Interrupt())
         },
         _ => Err(io::Error::last_os_error()),
     }
@@ -363,8 +404,7 @@ pub fn get_next_signal(&mut self) -> io::Result<InputEvent> {
 #[cfg(windows)]
 impl Clone for Interrupter {
     fn clone(&self) -> Self {
-        let duplicated = self.pipe_write.try_clone().expect("Failed to clone pipe");
-        Interrupter { pipe_write: duplicated }
+        Interrupter { interupt_event: Arc::clone(&self.interupt_event) } // Handle is Copy
     }
 }
 
@@ -384,8 +424,11 @@ impl Interrupter {
 
         #[cfg(windows)]
         {
-            self.pipe_write.write_all(&[b'x'])
+            unsafe {
+                SetEvent(self.interupt_event.0); //TODO error
+            }
         }
+        Ok(())
     }
 }
 
@@ -403,7 +446,6 @@ impl Drop for Input {
             unsafe {
                 SetConsoleMode(self.stdin_handle, self.orig_mode);
             }
-            let _ = self.pipe_read.flush();
         }
     }
 }
@@ -414,12 +456,24 @@ impl Drop for Interrupter {
         {
             let _ = close(self.pipe_write);
         }
+    }
+}
 
-        #[cfg(windows)]
-        {
-            let _ = self.pipe_write.flush();
+impl Drop for ManualResetEvent {
+    fn drop(&mut self) {
+        unsafe {
+            CloseHandle(self.0);
         }
     }
+    
+}
+
+
+impl std::fmt::Display for Interrupter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.interupt_event.0 as usize)
+    }
+    
 }
 
 
