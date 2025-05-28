@@ -1,10 +1,7 @@
-use std::io::{self, Read, Write};
+use std::io;
 #[cfg(unix)]
-use std::os::unix::io::{AsRawFd, RawFd};
-#[cfg(windows)]
-use std::os::windows::io::FromRawHandle;
-#[cfg(windows)]
-use std::fs::File;
+use std::os::{unix::io::{AsRawFd, RawFd, BorrowedFd}, fd::{OwnedFd, AsFd}};
+
 use std::ptr::null;
 use std::sync::Arc;
 
@@ -12,7 +9,12 @@ use std::sync::Arc;
 use nix::unistd::{pipe, read, write, close};
 
 #[cfg(unix)]
-use termios::*;
+use nix::fcntl::{fcntl, FcntlArg, OFlag};
+
+#[cfg(unix)]
+use nix::sys::termios::{tcgetattr, Termios, cfmakeraw, tcsetattr, SetArg::TCSANOW};
+#[cfg(unix)]
+use nix::libc;
 
 #[cfg(windows)]
 use winapi::um::consoleapi::*;
@@ -20,8 +22,11 @@ use winapi::um::consoleapi::*;
 use winapi::um::handleapi::*;
 #[cfg(windows)]
 use winapi::um::minwinbase::OVERLAPPED;
+#[cfg(windows)]
 use winapi::um::synchapi::CreateEventW;
+#[cfg(windows)]
 use winapi::um::synchapi::ResetEvent;
+#[cfg(windows)]
 use winapi::um::synchapi::SetEvent;
 #[cfg(windows)]
 use winapi::um::winbase::*;
@@ -39,11 +44,6 @@ use winapi::um::winnt::HANDLE;
 use winapi::um::synchapi::WaitForMultipleObjects;
 #[cfg(windows)]
 use std::ptr::null_mut;
-#[cfg(windows)]
-use std::os::windows::io::AsRawHandle;
-
-#[cfg(windows)]
-use winapi::um::namedpipeapi::CreatePipe;
 
 mod keys;
 pub use keys::Key;
@@ -62,7 +62,7 @@ pub struct Input {
     #[cfg(unix)]
     orig_termios: Termios,
     #[cfg(unix)]
-    pipe_read: RawFd,
+    pipe_read: OwnedFd,
     #[cfg(unix)]
     old_flags: i32,
 
@@ -76,14 +76,14 @@ pub struct Input {
 
 pub struct Interrupter {
     #[cfg(unix)]
-    pipe_write: RawFd,
+    pipe_write: OwnedFd,
 
     #[cfg(windows)]
     interupt_event: Arc<ManualResetEvent>,
 }
 
 impl Input {
-    pub fn new(enable_control_signal_handeling: bool) -> io::Result<(Self, Interrupter)> {
+    pub fn new() -> io::Result<(Self, Interrupter)> {
         #[cfg(unix)]
         {
             use nix::fcntl::{fcntl, FcntlArg, OFlag};
@@ -91,12 +91,12 @@ impl Input {
             let stdin_fd = io::stdin().as_raw_fd();
 
             // Save current termios
-            let orig_termios = tcgetattr(stdin_fd)?;
-            let flags = fcntl(stdin_fd, FcntlArg::F_GETFL)?; // get current flags
-            fcntl(stdin_fd, FcntlArg::F_SETFL(OFlag::from_bits_truncate(flags) | OFlag::O_NONBLOCK))?;
+            let orig_termios = tcgetattr(unsafe {BorrowedFd::borrow_raw(stdin_fd)})?;
+            let flags = fcntl(unsafe {BorrowedFd::borrow_raw(stdin_fd)}, FcntlArg::F_GETFL)?; // get current flags
+            fcntl(unsafe {BorrowedFd::borrow_raw(stdin_fd)}, FcntlArg::F_SETFL(OFlag::from_bits_truncate(flags) | OFlag::O_NONBLOCK))?;
             let mut raw = orig_termios.clone();
             cfmakeraw(&mut raw);
-            tcsetattr(stdin_fd, TCSANOW, &raw)?;
+            tcsetattr(unsafe {BorrowedFd::borrow_raw(stdin_fd)}, TCSANOW, &raw)?;
 
             let (read_fd, write_fd) = pipe()?;
 
@@ -129,11 +129,7 @@ impl Input {
                 // Save original mode and set raw mode
                 let orig_mode = mode;
                 let raw_mode;
-                if enable_control_signal_handeling {
-                    raw_mode = mode & !(ENABLE_PROCESSED_INPUT| ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT);
-                } else {
-                    raw_mode = mode & !(ENABLE_PROCESSED_INPUT | ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT);
-                }
+                raw_mode = mode & !(ENABLE_PROCESSED_INPUT| ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT);
                 let vt_mode = raw_mode | ENABLE_VIRTUAL_TERMINAL_INPUT;
                 if SetConsoleMode(stdin_handle, vt_mode) == 0 {
                     return Err(io::Error::last_os_error());
@@ -157,35 +153,13 @@ impl Input {
         }
     }
 
-    pub fn set_handle_contorl_signal(&mut self, enable: bool)-> io::Result<()>{
-        #[cfg(unix)]
-        {
-          //TODO figer out
-        }
-
-        #[cfg(windows)]
-        {
-            unsafe {
-                let mut mode: DWORD = 0;
-                if GetConsoleMode(self.stdin_handle, &mut mode) == 0 {
-                    return Err(io::Error::last_os_error());
-                }
-                if enable {
-                    mode &= !ENABLE_PROCESSED_INPUT;
-                }else{
-                    mode |= ENABLE_PROCESSED_INPUT;
-                }
-            }
-        }
-        Ok(())
-    }
-
     /// Read form the pipe
     fn reset_interupter(&mut self) -> io::Result<()> {
 
         #[cfg(unix)]
         {
-            read(self.pipe_read, buf).map_err(|e| io::Error::from_raw_os_error(e as i32))
+            let mut buf = [0; 32];
+            read(self.pipe_read.as_fd(), &mut buf).map_err(|e| io::Error::from_raw_os_error(e as i32))?;
         }
 
         #[cfg(windows)]
@@ -202,7 +176,7 @@ impl Input {
         #[cfg(unix)]
         {
             let mut buf = [0; 1];
-            match read(self.stdin_fd, &mut buf) {
+            match read(unsafe {BorrowedFd::borrow_raw(self.stdin_fd)}, &mut buf) {
             Ok(0) => Ok(None), // EOF
             Ok(_) => Ok(Some(buf[0])),
             Err(e) if e as i32 == libc::EAGAIN || e as i32 == libc::EWOULDBLOCK => Ok(None), // no data ready
@@ -248,7 +222,7 @@ impl Input {
     pub fn get_next_signal(&mut self) -> io::Result<InputEvent> {
         let mut fds = [
             libc::pollfd { fd: self.stdin_fd, events: libc::POLLIN, revents: 0 },
-            libc::pollfd { fd: self.pipe_read, events: libc::POLLIN, revents: 0 },
+            libc::pollfd { fd: self.pipe_read.as_raw_fd(), events: libc::POLLIN, revents: 0 },
         ];
 
         let ret = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as u64, -1) };
@@ -260,11 +234,10 @@ impl Input {
             if fd.revents & libc::POLLIN != 0 {
                 if fd.fd == self.stdin_fd {
                     return Ok(InputEvent::Input(self.parce_key()?));
-                } else if fd.fd == self.pipe_read {
+                } else if fd.fd == self.pipe_read.as_raw_fd() {
                     // pipe is ready
-                    let mut buf = [0; 40];
-                    self.read_pipe(&mut buf);
-                    return Ok(InputEvent::Interrupt(String::from_utf8_lossy(&buf).to_string()));
+                    self.reset_interupter();
+                    return Ok(InputEvent::Interrupt());
                 }
             }
         }
@@ -411,7 +384,8 @@ impl Clone for Interrupter {
 #[cfg(unix)]
 impl Clone for Interrupter {
     fn clone(&self) -> Self {
-        Interrupter { pipe_write: self.pipe_write } // RawFd is Copy
+        let new_pipe = self.pipe_write.try_clone().unwrap();
+        Interrupter { pipe_write: new_pipe } // OwnedFd is Clone
     }
 }
 
@@ -419,7 +393,9 @@ impl Interrupter {
     pub fn interrupt(&mut self) -> io::Result<()> {
         #[cfg(unix)]
         {
-            write(self.pipe_write, &[b'x']).map(|_| ()).map_err(|e| io::Error::from_raw_os_error(e as i32))
+            
+                write(self.pipe_write.as_fd(), &[b'x']).map(|_| ()).map_err(|e| io::Error::from_raw_os_error(e as i32))?
+            
         }
 
         #[cfg(windows)]
@@ -436,9 +412,8 @@ impl Drop for Input {
     fn drop(&mut self) {
         #[cfg(unix)]
         {
-            let _ = tcsetattr(self.stdin_fd, TCSANOW, &self.orig_termios);
-            let _ = fcntl(self.stdin_fd, FcntlArg::F_SETFL(OFlag::from_bits_truncate(self.old_flags)));
-            let _ = close(self.pipe_read);
+            let _ = tcsetattr(unsafe{ BorrowedFd::borrow_raw(self.stdin_fd)}, TCSANOW, &self.orig_termios);
+            let _ = fcntl(unsafe{ BorrowedFd::borrow_raw(self.stdin_fd)}, FcntlArg::F_SETFL(OFlag::from_bits_truncate(self.old_flags)));
         }
 
         #[cfg(windows)]
@@ -450,15 +425,7 @@ impl Drop for Input {
     }
 }
 
-impl Drop for Interrupter {
-    fn drop(&mut self) {
-        #[cfg(unix)]
-        {
-            let _ = close(self.pipe_write);
-        }
-    }
-}
-
+#[cfg(windows)]
 impl Drop for ManualResetEvent {
     fn drop(&mut self) {
         unsafe {
@@ -467,15 +434,6 @@ impl Drop for ManualResetEvent {
     }
     
 }
-
-
-impl std::fmt::Display for Interrupter {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.interupt_event.0 as usize)
-    }
-    
-}
-
 
 //TODO error handling check
 //TODO check on linux

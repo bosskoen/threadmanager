@@ -11,4 +11,4 @@ led = []
 library = {path = "../library"}
 serde = {version = "1.0.216", features = ["derive"]}
 libloading = "0.8.6"
-rustyline = "15.0.0"
+

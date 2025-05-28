@@ -1,13 +1,18 @@
-use std::{env, io::{self, Write}, process::exit, sync::mpsc};
+use std::{
+    env,
+    io::{self, Write},
+    process::exit,
+    sync::mpsc,
+};
 
 use library::error_handeler::{print, print_error, RGB};
 use private_lib::*;
-use rustyline::{config::Configurer, error::ReadlineError};
-mod private_lib;
+use library::rustyline::{config::Configurer, error::ReadlineError};
 mod cli;
+mod private_lib;
 
-const FAILED_TO_START_THREADMANIGER:i32 = 107;
-const FAILED_TO_START_CLI:i32 = 109;
+const FAILED_TO_START_THREADMANIGER: i32 = 107;
+const FAILED_TO_START_CLI: i32 = 109;
 const MAX_CLI_HISTORY_SIZE: usize = 100;
 
 fn main() {
@@ -16,59 +21,85 @@ fn main() {
     if arg.len() == 1 {
         #[cfg(debug_assertions)]
         {
-            #[cfg(windows)]{
-            if env::current_dir().unwrap().ends_with("scr") {
-                settings_path = r"threadmanager\genaral_setting.toml";
-            } else {
-              
-                settings_path = r"..\..\scr\threadmanager\genaral_setting.toml";
-            }}
-            #[cfg(unix)]{
-            if env::current_dir().unwrap().ends_with("scr") {
-                settings_path = r"threadmanager/genaral_setting.toml";
-            } else {
-                settings_path = r"../../scr/threadmanager/genaral_setting.toml";
-            }}
-        } 
-        #[cfg(not(debug_assertions))]{
-            settings_path = "";//TODO fille structere uit zoeken
+            #[cfg(windows)]
+            {
+                if env::current_dir().unwrap().ends_with("scr") {
+                    settings_path = r"threadmanager\genaral_setting.toml";
+                } else {
+                    settings_path = r"..\..\scr\threadmanager\genaral_setting.toml";
+                }
+            }
+            #[cfg(unix)]
+            {
+                if env::current_dir().unwrap().ends_with("scr") {
+                    settings_path = r"threadmanager/genaral_setting.toml";
+                } else {
+                    settings_path = r"../../scr/threadmanager/genaral_setting.toml";
+                }
+            }
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            settings_path = ""; //TODO fille structere uit zoeken
         }
     } else {
         settings_path = &arg[1];
     }
 
     //debug
-    #[cfg(debug_assertions)]{
-    print(&format!("{:?}",arg), RGB::DEBUG());
-    let current_dir = env::current_dir().unwrap();
-    print(&format!("Current working directory: {:?}", current_dir), RGB::DEBUG());
-    print(settings_path, RGB::DEBUG());
+    #[cfg(debug_assertions)]
+    {
+        print(&format!("{:?}", arg), RGB::DEBUG());
+        let current_dir = env::current_dir().unwrap();
+        print(
+            &format!("Current working directory: {:?}", current_dir),
+            RGB::DEBUG(),
+        );
+        print(settings_path, RGB::DEBUG());
     }
 
     print("CLI Plugin Manager", RGB::CYAN());
     let (error_tx, error_rx) = mpsc::channel();
     let (crach_tx, crach_rx) = mpsc::channel::<String>();
-    let mut open_threads = match Manager::new(error_tx, settings_path, crach_tx){
+    let mut open_threads = match Manager::new(error_tx, settings_path, crach_tx) {
         Ok(threads) => threads,
         Err(err) => {
-            print_error("main", &format!("Failed to start threadmaniger: {}", err), RGB::ERROR());
+            print_error(
+                "main",
+                &format!("Failed to start threadmaniger: {}", err),
+                RGB::ERROR(),
+            );
             exit(FAILED_TO_START_THREADMANIGER);
         }
     };
     open_threads.start_error(error_rx);
 
+
     let cli = cli::initialise_cli();
-    let mut rl = rustyline::Editor::<(), _>::new().unwrap_or_else(|err |{
-        print_error("main", &format!("Failed to create rustyline editor: {}", err), RGB::ERROR());
+
+    let mut rl = rustyline::Editor::<(), _>::new().unwrap_or_else(|err| {
+        print_error(
+            "main",
+            &format!("Failed to create rustyline editor: {}", err),
+            RGB::ERROR(),
+        );
         exit(FAILED_TO_START_THREADMANIGER);
     }); // TODO test interupts
-    rl.set_max_history_size(MAX_CLI_HISTORY_SIZE).unwrap_or_else(|err| {
-        print_error("main", &format!("Failed to set max history size: {}", err), RGB::ERROR());
-    });
+
+    rl.set_max_history_size(MAX_CLI_HISTORY_SIZE)
+        .unwrap_or_else(|err| {
+            print_error(
+                "main",
+                &format!("Failed to set max history size: {}", err),
+                RGB::ERROR(),
+            );
+        });
     rl.set_auto_add_history(true);
 
+    let x = rl.create_external_printer()?;
+
     loop {
-        match rl.readline("> "){
+        match rl.readline("> ") {
             Ok(line) => {
                 let input = line.trim();
 
@@ -81,7 +112,10 @@ fn main() {
                 if let Some(func) = cli.get(command) {
                     func(args.collect::<Vec<&str>>().as_slice(), &mut open_threads);
                 } else {
-                    print("Command not found. Type 'help' for a list of commands.", RGB::WHITE());
+                    print(
+                        "Command not found. Type 'help' for a list of commands.",
+                        RGB::WHITE(),
+                    );
                 }
             }
             Err(ReadlineError::Interrupted) => {
@@ -90,7 +124,7 @@ fn main() {
             }
             Err(ReadlineError::Eof) => {
                 print("CTRL-D pressed, exiting.", RGB::WHITE());
-                break;////
+                break; ////
             }
             Err(err) => {
                 print_error("main", &format!("Error: {:?}", err), RGB::ERROR());
@@ -98,9 +132,9 @@ fn main() {
             }
         }
 
-        crach_rx.try_iter().for_each(|msg| {let _ = open_threads.stop_thread(msg); });
+        crach_rx.try_iter().for_each(|msg| {
+            let _ = open_threads.stop_thread(msg);
+        });
     }
     drop(open_threads);
 }
-
-

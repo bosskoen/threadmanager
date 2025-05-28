@@ -5,6 +5,8 @@ use led_controller::{change_led_color,reset_color_led, color_on, color_off, chan
 #[cfg(feature = "led")]
 use chrono::Timelike;
 
+use rustyline::tty::windows::ExternalPrinter;
+use rustyline::ExternalPrinter;
 
 mod rgb;
 
@@ -28,7 +30,7 @@ const ERROR_STATUS_LOCK_FAILED:i32 = 101;
 const ERROR_STATUS_NOT_ERROR_STATUS:i32 = 102;
 
 lazy_static!{
-    static ref VARIABLES: Mutex<Variables> = Mutex::new(Variables::new());
+    pub static ref VARIABLES: Arc<Mutex<Variables>> = Arc::new(Mutex::new(Variables::new()));
 }
 
 struct Variables {
@@ -36,7 +38,8 @@ struct Variables {
     stdout_color: bool,
     stderr_color: bool,
     stdout: StandardStream,
-    stderr: StandardStream
+    stderr: StandardStream,
+    printer: Option<Box<dyn ExternalPrinter>>,
 }
 
 impl Variables {
@@ -52,8 +55,13 @@ impl Variables {
             stdout_color,
             stderr_color,
             stdout,
-            stderr
+            stderr,
+            printer: None,
         }
+    }
+
+    pub fn set_printer(&mut self ,printer: impl ExternalPrinter + 'static){
+        self.printer = Some(Box::new(printer));
     }
 }
 

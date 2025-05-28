@@ -1,5 +1,5 @@
 [workspace]
-members = [ "cli_reactive_input", "get_bz_pricing", "library", "template_plugin",
+members = [ "get_bz_pricing", "library", "template_plugin",
     "threadmanager"
 ]
 resolver = "2"

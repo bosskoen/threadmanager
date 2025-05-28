@@ -8,6 +8,25 @@ mod input;
 use history::{History, HistorySettings};
 use input::{Input, InputEvent, Interrupter};
 
+#[macro_export]
+macro_rules! raw_println {
+    ($($arg:tt)*) => {{
+        use std::io::{Write, stdout};
+
+        let mut output = format!($($arg)*);
+
+        output = output.replace("\n", "\r\n");
+        output.push_str("\r\n");
+
+
+        // Print and flush
+        let mut out = stdout();
+        write!(out, "{}", output).unwrap();
+        out.flush().unwrap();
+    }};
+}
+
+
 pub struct ReactiveInput {
     buffer: String,
     cursor_pos: usize,
@@ -17,14 +36,13 @@ pub struct ReactiveInput {
 
     completer: Option<Box<dyn Completer>>,
     auto_completes: Vec<String>,
+    auto_complete_index: usize,
 }
 
 pub struct Setting {
     history_capt: bool,
     max_history_size: usize,
     auto_add_history: bool,
-
-    handle_control_signals: bool,
 }
 
 pub trait Completer {
@@ -66,7 +84,7 @@ impl ReactiveInput {
         setting: Setting,
         completer: Option<Box<dyn Completer>>,
     ) -> (Self, Interrupter) {
-        let (inputs, interrupter) = Input::new(setting.handle_control_signals).unwrap();
+        let (inputs, interrupter) = Input::new().unwrap();
         (
             Self {
                 buffer: String::new(),
@@ -79,21 +97,29 @@ impl ReactiveInput {
                 inputs,
                 completer: completer,
                 auto_completes: Vec::new(),
+                auto_complete_index: 0,
             },
             interrupter,
         )
     }
-    pub fn set_completer<Cmpl: Completer + 'static>(&mut self, completer: Cmpl){
+    pub fn set_completer<Cmpl: Completer + 'static>(&mut self, completer: Cmpl) {
         self.completer = Some(Box::new(completer));
     }
-    pub fn remove_completer(&mut self){
+    pub fn remove_completer(&mut self) {
         self.completer = None
     }
     pub fn set_setting(&mut self, setting: Setting) {
         self.setting = setting;
 
-        self.inputs
-            .set_handle_contorl_signal(self.setting.handle_control_signals);
+        self.history.set_setting(HistorySettings {
+            is_capped: self.setting.history_capt,
+            capacity: self.setting.max_history_size,
+        });
+    }
+    pub fn get_setting(&mut self) -> &mut Setting{
+        &mut self.setting
+    }
+    pub fn reload_setting(&mut self){
         self.history.set_setting(HistorySettings {
             is_capped: self.setting.history_capt,
             capacity: self.setting.max_history_size,
@@ -128,14 +154,63 @@ impl ReactiveInput {
                                 re_run_completer = true;
                             }
                             input::Key::Enter => {
-                                println!("");
+                                println!("\r");
                                 self.auto_completes.clear();
+                                self.history.set_to_begining();
                                 break;
                             }
-                            input::Key::Tab => todo!(),  //TODO run completer
-                            input::Key::ShiftTab => todo!(),
+                            input::Key::Tab => {
+                                if re_run_completer {
+                                    if let Some(completer) = &self.completer {
+                                        self.auto_completes =
+                                            completer.complete(&self.buffer, self.cursor_pos);
+                                    } else {
+                                        self.auto_completes.clear();
+                                    }
+                                    self.auto_completes.insert(0, self.buffer.clone());
+                                    self.auto_complete_index = 0;
+                                    re_run_completer = false;
+                                }
+                                if !self.auto_completes.is_empty() {
+                                    scratch_buffer = None; // Exit history mode
+
+                                    
+                                    self.auto_complete_index =
+                                        (self.auto_complete_index + 1) % self.auto_completes.len();
+                                    self.buffer =
+                                        self.auto_completes[self.auto_complete_index].clone();
+                                    self.redraw_line(input);
+                                    self.cursor_to_end(input);
+                                }
+                            }
+                            input::Key::ShiftTab => {
+                                if re_run_completer {
+                                    if let Some(completer) = &self.completer {
+                                        self.auto_completes =
+                                            completer.complete(&self.buffer, self.cursor_pos);
+                                    } else {
+                                        self.auto_completes.clear();
+                                    }
+                                    self.auto_completes.insert(0, self.buffer.clone());
+                                    self.auto_complete_index = 0;
+                                    re_run_completer = false;
+                                }
+                                if !self.auto_completes.is_empty() {
+                                    scratch_buffer = None; // Exit history mode
+                                    self.auto_complete_index =
+                                        (self.auto_complete_index + self.auto_completes.len() - 1)
+                                            % self.auto_completes.len();
+                                    self.buffer =
+                                        self.auto_completes[self.auto_complete_index].clone();
+                                    self.cursor_to_end(input);
+                                    self.redraw_line(input);
+                                }
+                            }
                             input::Key::Backspace => {
                                 if (self.cursor_pos != 0) {
+                                    if scratch_buffer.is_some() {
+                                        scratch_buffer = None; // Exit history mode
+                                    }
                                     self.buffer.remove(self.cursor_pos - 1);
                                     self.cursor_pos -= 1;
                                     self.redraw_line(input);
@@ -149,9 +224,12 @@ impl ReactiveInput {
                                 self.cursor_pos = 0;
                                 re_run_completer = true;
                                 self.redraw_line(input);
-                            },
+                            }
                             input::Key::Delete => {
                                 if (self.cursor_pos < self.buffer.len()) {
+                                    if scratch_buffer.is_some() {
+                                        scratch_buffer = None; // Exit history mode
+                                    }
                                     self.buffer.remove(self.cursor_pos);
                                     self.redraw_line(input);
                                     re_run_completer = true;
@@ -164,9 +242,7 @@ impl ReactiveInput {
                                 re_run_completer = true;
                             }
                             input::Key::End => {
-                                print!("\r\x1B[{}C", self.buffer.len() + input.len());
-                                self.cursor_pos = self.buffer.len();
-                                stdout().flush();
+                                self.cursor_to_end(input);
                                 re_run_completer = true;
                             }
                             input::Key::ArrowUp => {
@@ -212,8 +288,7 @@ impl ReactiveInput {
                         }
                     } else {
                         //redraw
-                        print!("interrupted");
-                        std::io::stdout().flush().unwrap();
+                        self.redraw_line(input);
                     }
                 }
                 Err(e) => println!("Error: {}", e),
@@ -225,6 +300,12 @@ impl ReactiveInput {
         }
 
         Ok(ReadlineResult::Output(self.buffer.clone()))
+    }
+
+    fn cursor_to_end(&mut self, input: &str) {
+        print!("\r\x1B[{}C", self.buffer.len() + input.len());
+        self.cursor_pos = self.buffer.len();
+        stdout().flush();
     }
 
     fn redraw_line(&self, input_char: &str) {
@@ -244,15 +325,13 @@ impl Setting {
             history_capt: false,
             max_history_size: 100,
             auto_add_history: false,
-            handle_control_signals: true,
         }
     }
-    pub fn from(is_caped: bool, max_size: usize, auto_hist: bool, handle_conrtols: bool) -> Self {
+    pub fn from(is_caped: bool, max_size: usize, auto_hist: bool) -> Self {
         Self {
             history_capt: is_caped,
             max_history_size: max_size,
             auto_add_history: auto_hist,
-            handle_control_signals: handle_conrtols,
         }
     }
 
@@ -293,20 +372,6 @@ impl Setting {
     pub fn set_auto_add_history(&mut self, enabled: bool) {
         self.auto_add_history = enabled;
     }
-
-    pub fn enable_signal_handling(mut self) -> Self {
-        self.handle_control_signals = true;
-        self
-    }
-
-    pub fn disable_signal_handling(mut self) -> Self {
-        self.handle_control_signals = false;
-        self
-    }
-
-    pub fn set_signal_handling(&mut self, enabled: bool) {
-        self.handle_control_signals = enabled;
-    }
 }
 #[derive(Debug)]
 pub enum ReadlineError {
@@ -321,65 +386,5 @@ impl Display for ReadlineError {
 }
 
 impl Error for ReadlineError {}
-//TODO set escape key behavior
 
-/* Things I decided my system must do:
-User can type commands and they get processed when Enter is pressed
-
-When prints happen (from other threads), they interrupt cleanly and restore the input line
-
-The input supports:
-
-Cursor movement (arrows, home/end, etc.)
-
-Command history
-
-(Later) optional linter/highlight system
-
-Must have low CPU overhead (because it runs idle most of the time)
-
-Must run well on Raspberry Pi (resource-constrained)
-
-Must be portable (also works on Windows for development)
-
-
-Chosen approach:
-Use Unix poll() system call as the event loop
-
-Poll will wait for:
-
-Key presses (stdin becomes readable)
-
-Timeouts (so redraws can happen on timer)
-
-(Optional) messages from threads (using pipe/eventfd/self-pipe)
-
-Why I chose poll():
-✅ Low overhead (no busy waiting)
-
-✅ Keypresses are instant (poll wakes on key)
-
-✅ Redraws can happen on timer (set by poll timeout)
-
-✅ Other threads can send messages to wake the loop
-
-✅ Fully event-driven design
-
-✅ Works on Unix (Linux, Raspberry Pi), and can have Windows alternative
-
-❌ Requires writing my own line-editing logic (cursor move, history,
-
-
- Things I haven't fully decided yet:
-Redraw signaling system:
-
-Options:
-
-Use poll timeout to check periodically (simple)
-
-Use a pipe or eventfd that other threads write to (more responsive)
-
-Use signal handlers (harder, less recommended)
-
-Use async runtime (Tokio/async-std) — more overhead
-*/
+//TODO check for ^C and ^D when to polling maby throw a other thread

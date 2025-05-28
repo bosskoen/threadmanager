@@ -7,8 +7,7 @@ edition = "2021"
 
 
 [target.'cfg(unix)'.dependencies]
-nix = "0.27"
-termios = "0.3"
+nix = { version = "0.30.1", features = ["fs", "term"] }
 
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3.9", features = ["consoleapi", "handleapi", "winbase", "wincon", "processenv", "fileapi", "namedpipeapi" , "synchapi"] }
