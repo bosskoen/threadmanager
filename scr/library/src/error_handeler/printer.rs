@@ -83,12 +83,13 @@ pub fn reset_color() {
 
         
         
-        let mesige = if config.stdout_color{
+        let mut mesige = if config.stdout_color{
             let (r ,g, b) = rgb.to_tuple();
              format!("\x1b[38;2;{r};{g};{b}m{message}\x1b[38;2;255;255;255m")
         } else {
             message.to_string()
         };
+        mesige.push('\n');
         
         //eprintln!(">>> Trying to print: {message}");
         if let Err(e) = printer.print(mesige){
@@ -112,12 +113,13 @@ pub fn reset_color() {
             return;
         };
 
-        let mesige = if config.stdout_color{
+        let mut mesige = if config.stdout_color{
             let (r ,g, b) = rgb.to_tuple();
              format!("\x1b[38;2;{r};{g};{b}m\n{message} in {plugin}\x1b[38;2;255;255;255m")
         } else {
             format!("\n{} in {}", message, plugin)
         }; 
+        mesige.push('\n');
 
         printer.print(mesige);
     }
@@ -138,7 +140,7 @@ pub fn reset_color() {
             return;
         };
 
-        let formatted = format!("\n{} in {}", message, plugin);
+        let formatted = format!("\n{} in {}\n", message, plugin);
 
         if config.stdout_is_same_as_stderr {
             let formatted = if config.stdout_color {

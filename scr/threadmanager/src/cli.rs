@@ -109,7 +109,7 @@ fn list_apps(args: &[&str], open_threads: &mut Manager,printer: &Printer){
 fn help(args: &[&str], open_threads: &mut Manager,printer: &Printer) {
     if args.len() == 0 {
         // General help message for all commands
-        printer.print("Available commands:\n" , RGB::NOTICE());
+        printer.print("Available commands:" , RGB::NOTICE());
 
         printer.print("start <thread name> - Start a thread\n\
             stop <thread name> - Stop a thread\n\

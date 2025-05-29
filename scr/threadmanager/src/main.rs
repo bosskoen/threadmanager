@@ -111,10 +111,8 @@ fn main() {
                     break;
                 }
                 if let Some(func) = cli.get(command) {
-                    println!("Executing command: {}", command);
                     func(args.collect::<Vec<&str>>().as_slice(), &mut open_threads, &printer);
                 } else {
-                    println!("Command not found: {}", command);
                     printer.print(
                         "Command not found. Type 'help' for a list of commands.",
                         RGB::WHITE(),
