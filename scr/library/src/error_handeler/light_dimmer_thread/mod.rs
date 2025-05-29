@@ -1,9 +1,9 @@
-use std::{process::exit, sync::{atomic::{AtomicBool, Ordering}, mpsc::Sender, Arc, Mutex}, thread, time::Duration};
+use std::{process::exit, sync::{atomic::{AtomicBool, Ordering},Arc, Mutex}, thread, time::Duration};
 use chrono::{DateTime, Local, Timelike};
 
 use crate::Status;
 
-use super::{print_error, ErrorOperation, LED_DAY_BRIGHTNESS, LED_NIGHT_BRIGHTNESS, RGB, TIME_TO_BRIGHTEN, TIME_TO_DIM};
+use super::{ErrorOperation, Printer, LED_DAY_BRIGHTNESS, LED_NIGHT_BRIGHTNESS, RGB, TIME_TO_BRIGHTEN, TIME_TO_DIM};
 
 pub const PLUGIN_NAME: &str = "light_dimmer";
 const STATUS_INITIALIZE_ERROR : i32 = 108;
@@ -24,10 +24,10 @@ mod light_dimmer_types{
         }
     );
 
-}
+}  
 use light_dimmer_types::*;
 
-fn init_status(status: &Arc<Mutex<Box<dyn Status>>>) {
+fn init_status(status: &Arc<Mutex<Box<dyn Status>>>, printer: &mut Printer) {
     if let Ok(mut stat) = status.lock() {
         let new_status = LightDimmerStatus {
             current_brightness: 0,
@@ -35,13 +35,13 @@ fn init_status(status: &Arc<Mutex<Box<dyn Status>>>) {
         };
         (*stat) = Box::new(new_status);
     }else{
-        print_error(PLUGIN_NAME, "failed to initiolanise the status", RGB::CRITICAL_ERROR());
+        printer.print_error(PLUGIN_NAME, "failed to initiolanise the status", RGB::CRITICAL_ERROR());
         exit(STATUS_INITIALIZE_ERROR);
     }
 }
 
-pub fn start_light_dim(error_handel: Sender<ErrorOperation>, stopflag: Arc<AtomicBool>, status: Arc<Mutex<Box<dyn Status>>>){
-    init_status(&status);
+pub fn start_light_dim(mut printer: Printer, stopflag: Arc<AtomicBool>, status: Arc<Mutex<Box<dyn Status>>>){
+    init_status(&status, &mut printer);
 
     let mut last_updated = Local::now();
 
@@ -51,14 +51,12 @@ pub fn start_light_dim(error_handel: Sender<ErrorOperation>, stopflag: Arc<Atomi
             break;
         }
         if start_of_loop.hour() >= TIME_TO_DIM && last_updated.hour() < TIME_TO_DIM{
-            if let Err(_) = error_handel.send(ErrorOperation::CangeBrighness(LED_NIGHT_BRIGHTNESS, super::LedNumber::ALL)){
-                print_error(PLUGIN_NAME, "Failed to send mesige to error thread", RGB::CRITICAL_ERROR());
+            if let Err(_) = printer.send(ErrorOperation::CangeBrighness(LED_NIGHT_BRIGHTNESS, super::LedNumber::ALL), PLUGIN_NAME){
                 exit(ERROR_THREAD_DOWN);
             }
         }
         else if start_of_loop.hour() >= TIME_TO_BRIGHTEN && last_updated.hour() < TIME_TO_BRIGHTEN{
-            if let Err(_) = error_handel.send(ErrorOperation::CangeBrighness(LED_DAY_BRIGHTNESS, super::LedNumber::ALL)){
-                print_error(PLUGIN_NAME, "Failed to send mesige to error thread", RGB::CRITICAL_ERROR());
+            if let Err(_) = printer.send(ErrorOperation::CangeBrighness(LED_DAY_BRIGHTNESS, super::LedNumber::ALL), PLUGIN_NAME){
                 exit(ERROR_THREAD_DOWN);
             }
         } 

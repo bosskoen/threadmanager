@@ -5,7 +5,7 @@ pub mod web_service_adapter;
 
 use std::any::Any;
 
-pub use rusqlite;
+pub use rustyline;
 pub use chrono::{DateTime, Local, NaiveDateTime};
 pub use toml;
 

@@ -1,13 +1,12 @@
 use std::{
     env,
-    io::{self, Write},
     process::exit,
     sync::mpsc,
 };
 
-use library::error_handeler::{print, print_error, RGB};
+use library::error_handeler::RGB;
 use private_lib::*;
-use library::rustyline::{config::Configurer, error::ReadlineError};
+use library::rustyline::{self, config::Configurer, error::ReadlineError};
 mod cli;
 mod private_lib;
 
@@ -46,25 +45,42 @@ fn main() {
         settings_path = &arg[1];
     }
 
+    let mut rl = rustyline::Editor::<(), _>::new().unwrap_or_else(|err| {
+        eprint!("\nFailed to create rustyline editor: {}  in main", err);
+        exit(FAILED_TO_START_THREADMANIGER);
+    }); // TODO test interupts / drop on exit
+
+    rl.set_max_history_size(MAX_CLI_HISTORY_SIZE)
+        .unwrap_or_else(|err| {
+            eprint!("\nFailed to set max history size: {}  in main", err);
+        });
+    rl.set_auto_add_history(true);
+    let external_printer = rl.create_external_printer().unwrap();
+
+    let (error_tx, error_rx) = mpsc::channel();
+    let (crach_tx, crach_rx) = mpsc::channel::<String>();
+
+    let printer = library::error_handeler::Printer::new(external_printer, error_tx);
+
     //debug
     #[cfg(debug_assertions)]
     {
-        print(&format!("{:?}", arg), RGB::DEBUG());
+        printer.print(&format!("{:?}", arg), RGB::DEBUG());
         let current_dir = env::current_dir().unwrap();
-        print(
+        printer.print(
             &format!("Current working directory: {:?}", current_dir),
             RGB::DEBUG(),
         );
-        print(settings_path, RGB::DEBUG());
+        printer.print(settings_path, RGB::DEBUG());
     }
 
-    print("CLI Plugin Manager", RGB::CYAN());
-    let (error_tx, error_rx) = mpsc::channel();
-    let (crach_tx, crach_rx) = mpsc::channel::<String>();
-    let mut open_threads = match Manager::new(error_tx, settings_path, crach_tx) {
+
+    printer.print("CLI Plugin Manager", RGB::CYAN());
+
+    let mut open_threads = match Manager::new(printer.clone(), settings_path, crach_tx) {
         Ok(threads) => threads,
         Err(err) => {
-            print_error(
+            printer.print_error(
                 "main",
                 &format!("Failed to start threadmaniger: {}", err),
                 RGB::ERROR(),
@@ -77,28 +93,12 @@ fn main() {
 
     let cli = cli::initialise_cli();
 
-    let mut rl = rustyline::Editor::<(), _>::new().unwrap_or_else(|err| {
-        print_error(
-            "main",
-            &format!("Failed to create rustyline editor: {}", err),
-            RGB::ERROR(),
-        );
-        exit(FAILED_TO_START_THREADMANIGER);
-    }); // TODO test interupts
-
-    rl.set_max_history_size(MAX_CLI_HISTORY_SIZE)
-        .unwrap_or_else(|err| {
-            print_error(
-                "main",
-                &format!("Failed to set max history size: {}", err),
-                RGB::ERROR(),
-            );
-        });
-    rl.set_auto_add_history(true);
-
-    let x = rl.create_external_printer()?;
-
     loop {
+
+        crach_rx.try_iter().for_each(|msg| {
+            let _ = open_threads.stop_thread(msg);
+        });
+
         match rl.readline("> ") {
             Ok(line) => {
                 let input = line.trim();
@@ -106,35 +106,34 @@ fn main() {
                 let mut args = input.split_whitespace();
                 let command = args.next().unwrap_or_default();
 
+
                 if command == "exit" {
                     break;
                 }
                 if let Some(func) = cli.get(command) {
-                    func(args.collect::<Vec<&str>>().as_slice(), &mut open_threads);
+                    println!("Executing command: {}", command);
+                    func(args.collect::<Vec<&str>>().as_slice(), &mut open_threads, &printer);
                 } else {
-                    print(
+                    println!("Command not found: {}", command);
+                    printer.print(
                         "Command not found. Type 'help' for a list of commands.",
                         RGB::WHITE(),
                     );
                 }
             }
             Err(ReadlineError::Interrupted) => {
-                print("CTRL-C pressed, exiting.", RGB::WHITE());
+                printer.print("CTRL-C pressed, exiting.\n", RGB::WHITE());
                 break;
             }
             Err(ReadlineError::Eof) => {
-                print("CTRL-D pressed, exiting.", RGB::WHITE());
+                printer.print("CTRL-D pressed, exiting.\n", RGB::WHITE());
                 break; ////
             }
             Err(err) => {
-                print_error("main", &format!("Error: {:?}", err), RGB::ERROR());
+                printer.print_error("main", &format!("Error: {:?}", err), RGB::ERROR());
                 break;
             }
         }
-
-        crach_rx.try_iter().for_each(|msg| {
-            let _ = open_threads.stop_thread(msg);
-        });
     }
     drop(open_threads);
 }

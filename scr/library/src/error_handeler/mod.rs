@@ -5,16 +5,15 @@ use led_controller::{change_led_color,reset_color_led, color_on, color_off, chan
 #[cfg(feature = "led")]
 use chrono::Timelike;
 
-use rustyline::tty::windows::ExternalPrinter;
-use rustyline::ExternalPrinter;
-
 mod rgb;
 
 pub mod light_dimmer_thread;
+mod printer;
 
-use std::{io::{self, IsTerminal, Write}, process::exit, sync::{mpsc::Receiver, Arc, Mutex}};
+pub use printer::Printer;
+
+use std::{process::exit, sync::{mpsc::Receiver, Arc, Mutex}};
 use chrono::{DateTime, Local};
-use termcolor::{Color, ColorChoice, ColorSpec, StandardStream, WriteColor};
 use crate::{format_duration, Status};
 
 pub use rgb::RGB;
@@ -29,41 +28,6 @@ const INITIOLIZE_STATUS_ERROR:i32 = 100;
 const ERROR_STATUS_LOCK_FAILED:i32 = 101;
 const ERROR_STATUS_NOT_ERROR_STATUS:i32 = 102;
 
-lazy_static!{
-    pub static ref VARIABLES: Arc<Mutex<Variables>> = Arc::new(Mutex::new(Variables::new()));
-}
-
-struct Variables {
-    stdout_is_same_as_stderr: bool,
-    stdout_color: bool,
-    stderr_color: bool,
-    stdout: StandardStream,
-    stderr: StandardStream,
-    printer: Option<Box<dyn ExternalPrinter>>,
-}
-
-impl Variables {
-    fn new() -> Self {
-        let stdout_is_same_as_stderr = stdout_is_same_as_stderr();
-        let stdout_color = io::stdout().is_terminal();
-        let stderr_color = io::stderr().is_terminal();
-        let stdout = StandardStream::stdout(ColorChoice::Auto);
-        let stderr = StandardStream::stderr(ColorChoice::Auto);
-
-        Self {
-            stdout_is_same_as_stderr,
-            stdout_color,
-            stderr_color,
-            stdout,
-            stderr,
-            printer: None,
-        }
-    }
-
-    pub fn set_printer(&mut self ,printer: impl ExternalPrinter + 'static){
-        self.printer = Some(Box::new(printer));
-    }
-}
 
 enum ChangeColor {
     Yes(RGB),
@@ -204,8 +168,8 @@ pub enum ErrorOperation {
 }
 
 
-pub fn error_catchloop(receiver: Receiver<ErrorOperation>, status: Arc<Mutex<Box<dyn Status>>>) {
-    initialize_status(&status);
+pub fn error_catchloop(receiver: Receiver<ErrorOperation>, mut printer: Printer, status: Arc<Mutex<Box<dyn Status>>>) {
+    initialize_status(&status, &mut printer);
 
     #[cfg(feature = "led")]
     let mut led_controler = {
@@ -223,13 +187,13 @@ pub fn error_catchloop(receiver: Receiver<ErrorOperation>, status: Arc<Mutex<Box
     for error in receiver.iter() {
         match error {
             ErrorOperation::Print(plugin, message, color) => {
-                        print_error(&plugin, &message, color);
-                        update_status_error(&status, ChangeColor::No);
+                        printer.print_error(&plugin, &message, color);
+                        update_status_error(&status, ChangeColor::No, &mut printer);
                     },
             ErrorOperation::ChangeLed(rgb, is_error, led) => {
                         #[cfg(feature = "led")]
                         change_led_color(&mut led_controler, rgb, led).unwrap_or_else(|err| {
-                            print_error(
+                            printer.print_error(
                                 "errorThread",
                                 &format!("Failed to change {} color to {:?}: {}", led,rgb, err),
                                 RGB::CRITICAL_ERROR(),
@@ -237,13 +201,13 @@ pub fn error_catchloop(receiver: Receiver<ErrorOperation>, status: Arc<Mutex<Box
                             ()}
                         );
 
-                        update_status(&status, ChangeColor::Yes(rgb), is_error);
+                        update_status(&status, ChangeColor::Yes(rgb), is_error, &mut printer);
                     },
             ErrorOperation::PrintAndChangeLedError(plugin, message, color, rgb,led) => {
 
                         #[cfg(feature = "led")]
                         change_led_color(&mut led_controler, rgb,led).unwrap_or_else(|err| {
-                            print_error(
+                            printer.print_error(
                                 "errorThread",
                                 &format!("Plugin '{}' failed to change {} color to {:?}: {}", plugin, led,rgb, err),
                                 RGB::CRITICAL_ERROR(),
@@ -251,17 +215,17 @@ pub fn error_catchloop(receiver: Receiver<ErrorOperation>, status: Arc<Mutex<Box
                             ()}
                         );
 
-                        print_error(&plugin, &message, color);
-                        update_status_error(&status, ChangeColor::Yes(rgb));
+                        printer.print_error(&plugin, &message, color);
+                        update_status_error(&status, ChangeColor::Yes(rgb), &mut printer);
                     },
             ErrorOperation::StopErr => break,
             ErrorOperation::NonErrorPrint(plugin, message, rgb) => {
-                        print_interup(&plugin, &message, rgb);
+                        printer.named_print(&plugin, &message, rgb);
                     },
             ErrorOperation::CangeBrighness(new_brightness, led) => {
                         #[cfg(feature = "led")]
                         change_led_brightness(&mut led_controler, new_brightness, led).unwrap_or_else(|err| {
-                            print_error(
+                            printer.print_error(
                                 "errorThread",
                                 &format!("Failed to change {} brightness to {}: {}", led,new_brightness, err),
                                 RGB::CRITICAL_ERROR(),
@@ -272,19 +236,19 @@ pub fn error_catchloop(receiver: Receiver<ErrorOperation>, status: Arc<Mutex<Box
             ErrorOperation::RestColor(led_option,led) => {
                         #[cfg(feature = "led")]
                         reset_color_led(&mut led_controler, led_option,led).unwrap_or_else(|err| {
-                            print_error("errorThread", &format!("Failed to reset {} {} : {}", led_option,led,err), RGB::CRITICAL_ERROR());
+                           printer.print_error("errorThread", &format!("Failed to reset {} {} : {}", led_option,led,err), RGB::CRITICAL_ERROR());
                         });
                     },
             ErrorOperation::OffColor(led_option,led) => {
                         #[cfg(feature = "led")]
                         color_off(&mut led_controler, led_option,led).unwrap_or_else(|err| {
-                            print_error("errorThread", &format!("Failed to turn OFF {} {} : {}", led_option,led, err), RGB::CRITICAL_ERROR());
+                            printer.print_error("errorThread", &format!("Failed to turn OFF {} {} : {}", led_option,led, err), RGB::CRITICAL_ERROR());
                         });
                     },
             ErrorOperation::OnColor(led_option,led) => {
                         #[cfg(feature = "led")]
                         color_on(&mut led_controler, led_option,led).unwrap_or_else(|err| {
-                            print_error("errorThread", &format!("Failed to turn ON {} {} : {}", led_option,led, err), RGB::CRITICAL_ERROR());
+                            printer.print_error("errorThread", &format!("Failed to turn ON {} {} : {}", led_option,led, err), RGB::CRITICAL_ERROR());
                         });
                     },
             ErrorOperation::PWM(_pwmoption) => {
@@ -298,7 +262,7 @@ pub fn error_catchloop(receiver: Receiver<ErrorOperation>, status: Arc<Mutex<Box
             ErrorOperation::PrintAndChangeLed(plugin, message, color, rgb, led_number) => {
                 #[cfg(feature = "led")]
                 change_led_color(&mut led_controler, rgb,led_number).unwrap_or_else(|err| {
-                    print_error(
+                    printer.print_error(
                         "errorThread",
                         &format!("Plugin '{}' failed to change {} color to {:?}: {}", plugin, led_number,rgb, err),
                         RGB::CRITICAL_ERROR(),
@@ -306,128 +270,24 @@ pub fn error_catchloop(receiver: Receiver<ErrorOperation>, status: Arc<Mutex<Box
                     ()}
                 );
 
-                print_error(&plugin, &message, color);
-                update_status(&status, ChangeColor::Yes(rgb), false);
+                printer.print_error(&plugin, &message, color);
+                update_status(&status, ChangeColor::Yes(rgb), false, &mut printer);
             },
         }
     }
 }
 
-fn initialize_status(status: &Arc<Mutex<Box<dyn Status>>>) {
+fn initialize_status(status: &Arc<Mutex<Box<dyn Status>>>, printer: &mut Printer) {
     *(status.lock().unwrap_or_else(|_| {
-        print_error("errorThread","couldn't initialize error status", RGB::CRITICAL_ERROR());
+        printer.print_error("errorThread","couldn't initialize error status", RGB::CRITICAL_ERROR());
         exit(INITIOLIZE_STATUS_ERROR); 
     })) = Box::new(ErrorStatus::new());
 }
 
-fn print_message(stream: &mut StandardStream, message: &str, color: RGB) {
-    let (r, g, b) = color.to_tuple();
-    let mut color_spec = ColorSpec::new();
-    color_spec.set_fg(Some(Color::Rgb(r, g, b)));
 
-    if let Err(err) = stream.set_color(&color_spec) {
-        eprintln!("Failed to set color: {}", err);
-    }
-    if let Err(err) = writeln!(stream, "{}", message) {
-        eprintln!("Failed to write to stream: {}", err);
-    }
-    if let Err(err) = stream.set_color(ColorSpec::new().set_fg(Some(Color::Rgb(255,255,255)))) {
-        eprintln!("Failed to reset stream: {}", err);
-    }
-    if let Err(err) = stream.flush() {
-        eprintln!("Failed to flush stream: {}", err);
-    }
-}
-
-pub fn reset_color() {
-    let mut config = if let Ok(config) = VARIABLES.lock() {
-        config
-    } else {
-        eprintln!("couldn't lock print variables");
-        return;
-    };
-
-    if let Err(err) = config.stdout.reset(){
-        eprintln!("Failed to reset stdout: {}", err);
-    }
-    if let Err(err) = config.stderr.reset(){
-        eprintln!("Failed to reset stderr: {}", err);
-    }
-}
-
-pub fn print_error(plugin: &str, message: &str, color: RGB) {
-    let mut config = if let Ok(config) = VARIABLES.lock() {
-        config
-    } else {
-        eprintln!("couldn't lock print variables");
-        return;
-    };
-
-    let formatted_message = format!("\n{} in {}", message, plugin);
-
-    if config.stdout_is_same_as_stderr {
-        if config.stdout_color {
-            print_message(&mut config.stderr, &formatted_message, color);
-            print!("> ");
-            if let Err(err) = io::stdout().flush() {
-                eprintln!("Failed to flush stdout: {}", err);
-            }
-        } else {
-            eprint!("{formatted_message}");
-            print!("> ");
-            if let Err(err) = io::stdout().flush() {
-                eprintln!("Failed to flush stdout: {}", err);
-            }
-        }
-    } else {
-        if config.stderr_color {
-            print_message(&mut config.stderr, &formatted_message, color);
-        } else {
-            eprint!("{} in {}", message, plugin);
-        }
-    }
-}
-
-/// Prints a message that wil end the message with a newline "> " so the user can see that the program is waiting for input 
-pub fn print_interup(plugin: &str, message: &str, rgb: RGB) {
-    let mut config = if let Ok(config) = VARIABLES.lock() {
-        config
-    } else {
-        eprintln!("couldn't lock print variables");
-        return;
-    };
-
-    let formatted_message = format!("\n{} from {}", message, plugin);
-
-    if config.stdout_color {
-        print_message(&mut config.stdout, &formatted_message, rgb);
-    } else {
-        println!("{} from {}", message, plugin);
-    }
-    print!("> ");
-    if let Err(err) = io::stdout().flush() {
-        eprint!("Failed to flush stdout: {}", err);
-    }
-}
-
-pub fn print(message: &str, rgb: RGB) {
-    let mut config = if let Ok(config) = VARIABLES.lock() {
-        config
-    } else {
-        eprintln!("couldn't lock print variables");
-        return;
-    };
-
-    if config.stdout_color {
-        print_message(&mut config.stdout, message, rgb);
-    } else {
-        println!("{}", message);
-    }
-}
-
-fn update_status(status: &Arc<Mutex<Box<dyn Status>>>, new_color: ChangeColor, is_error: bool) {
+fn update_status(status: &Arc<Mutex<Box<dyn Status>>>, new_color: ChangeColor, is_error: bool, printer: &mut Printer) {
     if let Some(status) = (*status.lock().unwrap_or_else(|_| {
-        print_error("errorThread","couldn't lock error status", RGB::CRITICAL_ERROR());
+        printer.print_error("errorThread","couldn't lock error status", RGB::CRITICAL_ERROR());
         exit(ERROR_STATUS_LOCK_FAILED);
     })).as_any_mut().downcast_mut::<ErrorStatus>() {
         if is_error{
@@ -437,69 +297,12 @@ fn update_status(status: &Arc<Mutex<Box<dyn Status>>>, new_color: ChangeColor, i
             status.color = rgb;
         }
     } else {
-        print_error("errorThread","Status isn't of type ErrorStatus", RGB::CRITICAL_ERROR()); 
+        printer.print_error("errorThread","Status isn't of type ErrorStatus", RGB::CRITICAL_ERROR()); 
         exit(ERROR_STATUS_NOT_ERROR_STATUS);
     }
 }
 
-fn update_status_error(status: &Arc<Mutex<Box<dyn Status>>>, new_color: ChangeColor){
-    update_status(status, new_color, true);
+fn update_status_error(status: &Arc<Mutex<Box<dyn Status>>>, new_color: ChangeColor, printer: &mut Printer) {
+    update_status(status, new_color, true, printer);
 }
 
-#[cfg(unix)]
-fn stdout_is_same_as_stderr() -> bool {
-    use std::os::unix::io::AsRawFd;
-    use std::mem::MaybeUninit;
-    use std::io::{stdout, stderr};
-    use libc::{fstat, stat};
-
-    unsafe {
-        let mut stat_out = MaybeUninit::<stat>::uninit();
-        let mut stat_err = MaybeUninit::<stat>::uninit();
-
-        let stdout_fd = stdout().as_raw_fd();
-        let stderr_fd = stderr().as_raw_fd();
-
-        if fstat(stdout_fd, stat_out.as_mut_ptr()) != 0 {
-            return false;
-        }
-        if fstat(stderr_fd, stat_err.as_mut_ptr()) != 0 {
-            return false;
-        }
-
-        let stat_out = stat_out.assume_init();
-        let stat_err = stat_err.assume_init();
-
-        // Compare device and inode
-        stat_out.st_dev == stat_err.st_dev && stat_out.st_ino == stat_err.st_ino
-    }
-}
-
-#[cfg(windows)]
-fn stdout_is_same_as_stderr() -> bool {
-    use std::os::windows::io::{AsRawHandle, RawHandle};
-    use winapi::um::fileapi::GetFileType;
-    use winapi::um::consoleapi::GetConsoleMode;
-    use winapi::um::winbase::FILE_TYPE_CHAR;
-
-    let stdout_handle: RawHandle = std::io::stdout().as_raw_handle();
-    let stderr_handle: RawHandle = std::io::stderr().as_raw_handle();
-
-    let mut stdout_mode: u32 = 0;
-
-    if stdout_handle == stderr_handle {
-        return true;
-    } else {
-        let stdout_type = unsafe { GetFileType(stdout_handle as _) };
-        let stderr_type = unsafe { GetFileType(stderr_handle as _) };
-
-        if stdout_type == FILE_TYPE_CHAR && stderr_type == FILE_TYPE_CHAR {
-            let stdout_is_console = unsafe { GetConsoleMode(stdout_handle as _, &mut stdout_mode) != 0 };
-            let stderr_is_console = unsafe { GetConsoleMode(stderr_handle as _, &mut stdout_mode) != 0 };
-
-            return stdout_is_console && stderr_is_console;
-        } else {
-           return false;
-        }
-    }
-}

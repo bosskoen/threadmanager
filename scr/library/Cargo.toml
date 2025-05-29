@@ -15,7 +15,7 @@ reqwest = {version = "0.12.9", features = ["blocking"] }
 retry = { version = "2.0.0"}
 url = { version = "2.5.4"}
 toml = "0.8.19"
-termcolor = "1.4.1"
+atty = "0.2"
 winapi = { version = "0.3.9", features = ["consoleapi","fileapi","winbase"] }
 lazy_static = "1.4.0"
 rppal = {version = "0.22.1", optional = true}

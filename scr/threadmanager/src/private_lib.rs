@@ -1,5 +1,5 @@
 use libloading::{Library, Symbol};
-use library::{error_handeler::{self, error_catchloop, print, print_error, reset_color, ErrorOperation, LedOption, RGB}, impl_status, toml, ErrorThreadDownError, Status};
+use library::{error_handeler::{self, error_catchloop, ErrorOperation, LedOption, Printer, RGB}, impl_status, toml, ErrorThreadDownError, Status};
 use std::{collections::HashMap, error::Error, fmt, fs, panic, process::exit, sync::{atomic::AtomicBool, mpsc::{Receiver, Sender}, Arc, Mutex}, thread::{self, JoinHandle}};
 use serde::Deserialize;
 
@@ -13,7 +13,7 @@ const ERROR_PENICED:i32 = 104;
 
 pub struct Manager {
     map: HashMap<String, ThreadHandel>,
-    pub error_sender: Sender<ErrorOperation>,
+    pub printer: Printer,
     settings: Settings,
     settings_path: String,
     crash_notifier: Sender<String>,
@@ -21,18 +21,18 @@ pub struct Manager {
 
 impl Drop for Manager {
     fn drop(&mut self) {
-        print("Stopping all threads", RGB::NOTICE());
+        self.printer.print("Stopping all threads", RGB::NOTICE());
         self.stop_all_threads();
-        print("Stopping error thread", RGB::NOTICE());
+        self.printer.print("Stopping error thread", RGB::NOTICE());
         self.stop_error();
-        reset_color();
+        Printer::reset_color();
     }
 }
 
 impl Manager {
-    pub fn new(error_sender: Sender<ErrorOperation>, settings_path: &str, crash_notifier: Sender<String>) -> Result<Self, ManagerError> {
+    pub fn new(printer: Printer, settings_path: &str, crash_notifier: Sender<String>) -> Result<Self, ManagerError> {
         let settings = Settings::deserialize(settings_path)?;
-        Ok(Self { map: HashMap::new(), error_sender, settings, crash_notifier, settings_path: settings_path.to_string() })
+        Ok(Self { map: HashMap::new(), printer, settings, crash_notifier, settings_path: settings_path.to_string() })
     }
 
     pub fn start_new_thread(&mut self, name: String) -> Result<(), ManagerError> {
@@ -51,13 +51,13 @@ impl Manager {
         let stop_flag_clone = Arc::clone(&stop_flag);
         let status: Arc<Mutex<Box<dyn Status>>> = Arc::new(Mutex::new(Box::new(IniStatus {})));
         let status_clone = Arc::clone(&status);
-        let sender_clone = self.error_sender.clone();
+        let printer_clone = self.printer.clone();
         let name_clone = name.clone();
         let crash_notifier = self.crash_notifier.clone();
 
         let handle =
             thread::spawn(move || {
-                thread_logic(&dll_path, name_clone, sender_clone, stop_flag_clone, status_clone, app_setting_path, crash_notifier);
+                thread_logic(&dll_path, name_clone, printer_clone, stop_flag_clone, status_clone, app_setting_path, crash_notifier);
             });
 
         self.map.insert(name, ThreadHandel::new(handle, stop_flag, status));
@@ -68,7 +68,7 @@ impl Manager {
         if let Some(thread) = self.map.remove(&name) {
             thread.stop_flag.store(true, std::sync::atomic::Ordering::Relaxed);
             if let Err(x) = thread.handle.join() {
-                print_error("Manager", &format!("{} panicked while closing with error\n{:?}", name, x), RGB::ERROR());
+                self.printer.print_error("Manager", &format!("{} panicked while closing with error\n{:?}", name, x), RGB::ERROR());
             }
             Ok(())
         } else {
@@ -94,7 +94,7 @@ impl Manager {
                 continue;
             }
         
-            print(&format!("stopping: {name}"), RGB::NOTICE());
+            self.printer.print(&format!("stopping: {name}"), RGB::NOTICE());
             handle.stop_flag.store(true, std::sync::atomic::Ordering::Relaxed);
             to_remove.push((name, handle.handle));
            
@@ -108,14 +108,14 @@ impl Manager {
 
         for (name, handle) in to_remove{
             if let Err(x) = handle.join() {
-                print_error("Manager", &format!("{} panicked while closing with error\n{:?}", name, x), RGB::ERROR());
+                self.printer.print_error("Manager", &format!("{} panicked while closing with error\n{:?}", name, x), RGB::ERROR());
             }
         }
     }
 
     pub fn help_message(&self, name: String) -> Result<(), ManagerError> {
         if let Some(setting) = self.settings.apps.get(&name) {
-            print(&setting.help_message, RGB::WHITE());
+            self.printer.print(&setting.help_message, RGB::WHITE());
             Ok(())
         } else {
             Err(ManagerError::AppDoesntExist(name))
@@ -123,7 +123,7 @@ impl Manager {
     }
 
     pub fn list_threads(&self, mode: Mode) {
-        print(&format!("All {} threads:", match mode {
+        self.printer.print(&format!("All {} threads:", match mode {
             Mode::All => "running and stopped",
             Mode::Running => "running",
             Mode::Stopped => "stopped",
@@ -131,20 +131,20 @@ impl Manager {
         match mode {
             Mode::All => {
                 for (_, setting) in self.settings.apps.iter() {
-                    print(&setting.name, RGB::WHITE());
+                    self.printer.print(&setting.name, RGB::WHITE());
                 }
-                print("errorThread", RGB::TRACE());
-                print(error_handeler::light_dimmer_thread::PLUGIN_NAME, RGB::TRACE());
+                self.printer.print("errorThread", RGB::TRACE());
+                self.printer.print(error_handeler::light_dimmer_thread::PLUGIN_NAME, RGB::TRACE());
             },
             Mode::Running => {
                 for (name, _) in self.map.iter() {
-                    print(&name, RGB::WHITE());
+                    self.printer.print(&name, RGB::WHITE());
                 }
             },
             Mode::Stopped => {
                 let running: Vec<&String> = self.settings.apps.keys().filter(|name| !self.map.contains_key(*name)).collect();
                 for name in running {
-                    print(&name, RGB::WHITE());
+                    self.printer.print(&name, RGB::WHITE());
                 }
             },
         }
@@ -153,9 +153,10 @@ impl Manager {
     pub fn start_error(&mut self, error_receiver: Receiver<ErrorOperation>) {
         let status: Arc<Mutex<Box<dyn Status>>> = Arc::new(Mutex::new(Box::new(IniStatus {})));
         let status_clone = Arc::clone(&status);
+        let printer_clone = self.printer.clone();
 
         let handle = thread::spawn(move || {
-            error_catchloop(error_receiver, status) 
+            error_catchloop(error_receiver, printer_clone ,status) 
         });
 
         self.map.insert(String::from("errorThread"), ThreadHandel::new(handle, Arc::new(AtomicBool::new(false)), status_clone));
@@ -166,7 +167,7 @@ impl Manager {
 
     #[cfg(not(feature = "led"))]
     pub fn start_light_dimmer(&mut self){
-        print("LED feature is not enabled, light dimmer will not be started", RGB::ALERT());
+        self.printer.print("LED feature is not enabled, light dimmer will not be started", RGB::ALERT());
     }
 
     #[cfg(feature = "led")]
@@ -184,13 +185,13 @@ impl Manager {
     }
 
     pub fn stop_error(&mut self) {
-        if let Err(_) = self.error_sender.send(ErrorOperation::StopErr) {
-            print_error("Manager", "ErrorThread's receiver has been dropped too early", RGB::ERROR());
+        if let Err(_) = self.printer.send(ErrorOperation::StopErr, "Manager") {
+            self.printer.print_error("Manager", "ErrorThread's receiver has been dropped too early", RGB::ERROR());
             exit(ERROR_THREAD_RESEVER_DOWN);
         }
         if let Some(thread) = self.map.remove(&String::from("errorThread")) {
             if let Err(x) = thread.handle.join() {
-                print_error("Manager", &format!("ErrorThread panicked while closing with error\n{:?}", x), RGB::ERROR());
+                self.printer.print_error("Manager", &format!("ErrorThread panicked while closing with error\n{:?}", x), RGB::ERROR());
                 exit(ERROR_PENICED)
             }
         }
@@ -198,14 +199,14 @@ impl Manager {
             if let Some(thread) = self.map.remove(&error_handeler::light_dimmer_thread::PLUGIN_NAME.to_string()) {
                 thread.stop_flag.store(true, std::sync::atomic::Ordering::Relaxed);
                 if let Err(x) = thread.handle.join() {
-                    print_error("Manager", &format!("ErrorThread panicked while closing with error\n{:?}", x), RGB::ERROR());
+                    self.printer.print_error("Manager", &format!("ErrorThread panicked while closing with error\n{:?}", x), RGB::ERROR());
                 }
             }
         }
     }
     pub fn get_status(&self, thread_name: String) -> Result<(), ManagerError> {
         if let Some(handle) = self.map.get(&thread_name) {
-            printstatus(&handle.status);
+            printstatus(&handle.status, &self.printer);
         } else {
             if self.settings.apps.contains_key(&thread_name) {
                 return Err(ManagerError::AppIsntRunning(thread_name));
@@ -220,7 +221,7 @@ impl Manager {
         self.settings = match Settings::deserialize(&self.settings_path) {
             Ok(setting) => setting,
             Err(_) => {
-                print("failed to get new settings", RGB::ERROR());
+                self.printer.print("failed to get new settings", RGB::ERROR());
                 return;
             },
         }
@@ -245,84 +246,84 @@ impl ThreadHandel {
     }
 }
 
-fn printstatus(status: &Arc<Mutex<Box<dyn Status>>>) {
+fn printstatus(status: &Arc<Mutex<Box<dyn Status>>>, printer: &Printer) {
     if let Ok(x) = status.lock() {
-        print(&(*x).format(), RGB::INFO());
+        printer.print(&(*x).format(), RGB::INFO());
     } else {
-        print_error("Manager", "Error while printing status: lock failed", RGB::ERROR());
+        printer.print_error("Manager", "Error while printing status: lock failed", RGB::ERROR());
     }
 }
 
-fn thread_logic(dll_path: &str, name: String, sender_clone: Sender<ErrorOperation>, stop_flag: Arc<AtomicBool>, status: Arc<Mutex<Box<dyn Status>>>, app_setting_path: String, crash_notifier: Sender<String>) {
+fn thread_logic(dll_path: &str, name: String, printer: Printer, stop_flag: Arc<AtomicBool>, status: Arc<Mutex<Box<dyn Status>>>, app_setting_path: String, crash_notifier: Sender<String>) {
     unsafe {
         if fs::metadata(&dll_path).is_err() {
-            report_error(&sender_clone, &crash_notifier, name, format!("File not found: \"{dll_path}\""));
+            report_error(&printer, &crash_notifier, name, format!("File not found: \"{dll_path}\""));
             return;
         }
 
         #[cfg(windows)]
         if !dll_path.ends_with(".dll") {
-            report_error(&sender_clone, &crash_notifier, name, format!("File is not a dynamic link library: \"{dll_path}\""));
+            report_error(&printer, &crash_notifier, name, format!("File is not a dynamic link library: \"{dll_path}\""));
             return;
         }
         #[cfg(unix)]
         if !dll_path.ends_with(".so") {
-            report_error(&sender_clone, &crash_notifier, name, format!("File is not a shared object: \"{dll_path}\""));
+            report_error(&printer, &crash_notifier, name, format!("File is not a shared object: \"{dll_path}\""));
             return;
         }
 
         if fs::metadata(&app_setting_path).is_err(){
-            report_error(&sender_clone, &crash_notifier, name, format!("File not found: \"{app_setting_path}\""));
+            report_error(&printer, &crash_notifier, name, format!("File not found: \"{app_setting_path}\""));
             return;
         }
         let lib = match Library::new(dll_path) {
             Ok(value) => value,
             Err(err) => {
-                report_error(&sender_clone, &crash_notifier, name, format!("Error while loading library: \"{err}\""));
+                report_error(&printer, &crash_notifier, name, format!("Error while loading library: \"{err}\""));
                 return;
             },
         };
-        let start: Symbol<fn(Sender<ErrorOperation>, Arc<AtomicBool>, Arc<Mutex<Box<dyn Status>>>, String) -> Result<(), Box<dyn Error>>> = match lib.get(b"start") {
+        let start: Symbol<fn(Printer, Arc<AtomicBool>, Arc<Mutex<Box<dyn Status>>>, String) -> Result<(), Box<dyn Error>>> = match lib.get(b"start") {
             Ok(value) => value,
             Err(err) => {
-                report_error(&sender_clone, &crash_notifier, name, format!("Error while loading start function: {err}"));
+                report_error(&printer, &crash_notifier, name, format!("Error while loading start function: {err}"));
                 return;
             },
         };
-        let sender = sender_clone.clone();
+        let printer_clone = printer.clone();
         let status_clone = status.clone();
 
-        match panic::catch_unwind(|| { start(sender_clone, stop_flag, status_clone, app_setting_path) }) {
+        match panic::catch_unwind(|| { start(printer_clone, stop_flag, status_clone, app_setting_path) }) {
             Ok(result) => {
                 match result {
                     Ok(_) => {
-                        print(&format!("{} has stopped gracefully\nlast status:", &name), RGB::INFO());
-                        printstatus(&status);
+                        printer.print(&format!("{} has stopped gracefully\nlast status:", &name), RGB::INFO());
+                        printstatus(&status, &printer);
                     },
                     Err(err) => {
                         if let Some(fatal_error) = err.downcast_ref::<ErrorThreadDownError>() {
-                            print_error("Manager", &format!("{}", fatal_error), RGB::CRITICAL_ERROR());
+                            printer.print_error("Manager", &format!("{}", fatal_error), RGB::CRITICAL_ERROR());
                             exit(ERROR_THREAD_DOWN)
                         } else {
-                            if let Err(_) = sender.send(ErrorOperation::PrintAndChangeLedError(name.clone(), format!("Thread stopped with errors {}", err), RGB::WARNING(), RGB::RED(), error_handeler::LedNumber::LED1)) {
-                                print_error("Manager", &format!("Error while sending error: {} Thread stopped with errors {}", name, err), RGB::CRITICAL_ERROR());
+                            if let Err(_) = printer.send(ErrorOperation::PrintAndChangeLedError(name.clone(), format!("Thread stopped with errors {}", err), RGB::WARNING(), RGB::RED(), error_handeler::LedNumber::LED1),&name) {
+                                printer.print_error("Manager", &format!("Error while sending error: {} Thread stopped with errors {}", name, err), RGB::CRITICAL_ERROR());
                                 exit(ERROR_THREAD_DOWN);
                             }
                         }
-                        send_crash_notifier(&crash_notifier, name.clone());
+                        send_crash_notifier(&crash_notifier, name.clone(),&printer);
                     },
                 }
             },
             Err(error) => {
-                if let Err(_) = sender.send(ErrorOperation::PrintAndChangeLedError(name.clone(), format!("Thread panicked unexpectedly: {:?}", error), RGB::CRITICAL_ERROR(), RGB::RED(), error_handeler::LedNumber::LED1)) {
-                    print_error("Manager", &format!("Error while sending error: {} Thread panicked unexpectedly: {:?}", name, error), RGB::CRITICAL_ERROR());
+                if let Err(_) = printer.send(ErrorOperation::PrintAndChangeLedError(name.clone(), format!("Thread panicked unexpectedly: {:?}", error), RGB::CRITICAL_ERROR(), RGB::RED(), error_handeler::LedNumber::LED1), &name) {
+                    printer.print_error("Manager", &format!("Error while sending error: {} Thread panicked unexpectedly: {:?}", name, error), RGB::CRITICAL_ERROR());
                     exit(ERROR_THREAD_DOWN);
                 }
-                if let Err(_) = sender.send(ErrorOperation::OnColor(LedOption::Red, error_handeler::LedNumber::LED1)) {
-                    print_error("Manager", &format!("Error while sending error: {} Thread panicked unexpectedly: {:?}", name, error), RGB::CRITICAL_ERROR());
+                if let Err(_) = printer.send(ErrorOperation::OnColor(LedOption::Red, error_handeler::LedNumber::LED1), &name) {
+                    printer.print_error("Manager", &format!("Error while sending error: {} Thread panicked unexpectedly: {:?}", name, error), RGB::CRITICAL_ERROR());
                     exit(ERROR_THREAD_DOWN);
                 }
-                send_crash_notifier(&crash_notifier, name.clone());
+                send_crash_notifier(&crash_notifier, name.clone(), &printer);
             },
         }
         match status.lock() {
@@ -330,23 +331,23 @@ fn thread_logic(dll_path: &str, name: String, sender_clone: Sender<ErrorOperatio
                 (*lock) = Box::new(IniStatus {});
             },
             Err(_) => {
-                print_error(&name, "Couldn't reset status to initial state", RGB::CRITICAL_ERROR());
+                printer.print_error(&name, "Couldn't reset status to initial state", RGB::CRITICAL_ERROR());
             },
         }
     }
 }
 
-fn report_error(sender: &Sender<ErrorOperation>, crash_notifier: &Sender<String>, name: String, error_message: String) {
-    if let Err(_) = sender.send(ErrorOperation::Print(name.clone(), error_message.clone(), RGB::ERROR())) {
-        print_error("Manager", &format!("Error while sending error from {name}: {error_message}"), RGB::CRITICAL_ERROR());
+fn report_error(printer: &Printer, crash_notifier: &Sender<String>, name: String, error_message: String) {
+    if let Err(_) = printer.send(ErrorOperation::Print(name.clone(), error_message.clone(), RGB::ERROR()), &name) {
+        printer.print_error("Manager", &format!("Error while sending error from {name}: {error_message}"), RGB::CRITICAL_ERROR());
         exit(ERROR_THREAD_DOWN);
     }
-    send_crash_notifier(crash_notifier, name);
+    send_crash_notifier(crash_notifier, name, printer);
 }
 
-fn send_crash_notifier(crash_notifier: &Sender<String>, name: String) {
+fn send_crash_notifier(crash_notifier: &Sender<String>, name: String, printer: &Printer) {
     if let Err(_) = crash_notifier.send(name.clone()) {
-        print_error("Manager", &format!("Error while notifying main of unexpected crash in {name}"), RGB::CRITICAL_ERROR());
+        printer.print_error("Manager", &format!("Error while notifying main of unexpected crash in {name}"), RGB::CRITICAL_ERROR());
         exit(CRASH_NOTIFIER_DOWN);
     }
 }
