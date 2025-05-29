@@ -8,4 +8,4 @@ crate-type = ["dylib"]
 
 [dependencies]
 library = {path = "../library"}
-serde = {version = "1.0.216", features = ["derive"]}
+serde = {version = "1.0.219", features = ["derive"]}
