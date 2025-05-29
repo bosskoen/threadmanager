@@ -4,7 +4,9 @@ use std::{
     sync::mpsc,
 };
 
-use library::error_handeler::RGB;
+mod atexit;
+
+use library::error_handeler::{cleanup_static, RGB};
 use private_lib::*;
 use library::rustyline::{self, config::Configurer, error::ReadlineError};
 mod cli;
@@ -15,6 +17,10 @@ const FAILED_TO_START_CLI: i32 = 109;
 const MAX_CLI_HISTORY_SIZE: usize = 100;
 
 fn main() {
+    let mut atexit = atexit::CleanupRegistry::new();
+
+    atexit.register(||{cleanup_static()});
+
     let settings_path;
     let arg = env::args().collect::<Vec<String>>();
     if arg.len() == 1 {
@@ -61,7 +67,6 @@ fn main() {
     let (crach_tx, crach_rx) = mpsc::channel::<String>();
 
     let printer = library::error_handeler::Printer::new(external_printer, error_tx);
-
     //debug
     #[cfg(debug_assertions)]
     {
@@ -88,6 +93,7 @@ fn main() {
             exit(FAILED_TO_START_THREADMANIGER);
         }
     };
+
     open_threads.start_error(error_rx);
 
 
@@ -111,10 +117,8 @@ fn main() {
                     break;
                 }
                 if let Some(func) = cli.get(command) {
-                    println!("Executing command: {}", command);
                     func(args.collect::<Vec<&str>>().as_slice(), &mut open_threads, &printer);
                 } else {
-                    println!("Command not found: {}", command);
                     printer.print(
                         "Command not found. Type 'help' for a list of commands.",
                         RGB::WHITE(),
@@ -137,3 +141,6 @@ fn main() {
     }
     drop(open_threads);
 }
+
+
+//TODO replace exit with memory safe exit

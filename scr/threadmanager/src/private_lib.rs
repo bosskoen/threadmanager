@@ -3,6 +3,7 @@ use library::{error_handeler::{self, error_catchloop, ErrorOperation, LedOption,
 use std::{collections::HashMap, error::Error, fmt, fs, panic, process::exit, sync::{atomic::AtomicBool, mpsc::{Receiver, Sender}, Arc, Mutex}, thread::{self, JoinHandle}};
 use serde::Deserialize;
 
+
 pub struct IniStatus{}
 impl_status!(IniStatus, |_| String::from("initialization status"));
 
