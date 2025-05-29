@@ -10,7 +10,7 @@ mod rgb;
 pub mod light_dimmer_thread;
 mod printer;
 
-pub use printer::Printer;
+pub use printer::{Printer, cleanup_static};
 
 use std::{process::exit, sync::{mpsc::Receiver, Arc, Mutex}};
 use chrono::{DateTime, Local};

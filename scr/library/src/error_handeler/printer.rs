@@ -1,4 +1,4 @@
-use std::{io::{stderr, stdout, Write}, sync::{mpsc::Sender, Arc, Mutex}};
+use std::{io::{stderr, stdout, Write}, sync::{mpsc::Sender, Arc, Mutex}, thread::JoinHandle};
 
 use rustyline::ExternalPrinter;
 
@@ -12,6 +12,12 @@ struct Variables {
     stdout_is_same_as_stderr: bool,
     stdout_color: bool,
     stderr_color: bool,
+    print_thread: Option<PrintThread>,
+}
+
+struct PrintThread {
+    thread: JoinHandle<()>,
+    sender: Sender<PrintOperation>,
 }
 
 impl Variables {
@@ -24,19 +30,77 @@ impl Variables {
             stdout_is_same_as_stderr,
             stdout_color,
             stderr_color,
+            print_thread: None,
+        }
+    }
+
+    fn set_print_thread(&mut self, thread: PrintThread) {
+        if let Some(old_thread) = self.print_thread.take() {
+            drop(old_thread);
+        }
+        self.print_thread = Some(thread);
+    }
+}
+
+pub fn cleanup_static(){
+    if let Ok(mut variables) = VARIABLES.lock() {
+        if let Some(thread) = variables.print_thread.take() {
+            drop(thread);
+        }
+    } else {
+        eprintln!("couldn't lock print variables");
+    }
+}
+
+
+impl Drop for PrintThread {
+    fn drop(&mut self) {
+        if let Err(e) = self.sender.send(PrintOperation::Close) {
+            eprintln!("Failed to send close operation: {:?}", e);
+        }
+        let thread = std::mem::replace(&mut self.thread, std::thread::spawn(|| {}));
+        if let Err(e) = thread.join() {
+            eprintln!("Failed to join print thread: {:?}", e);
         }
     }
 }
 
+enum PrintOperation{
+    Print(String),
+    Close,
+}
+
 pub struct Printer{
-    printer: Arc<Mutex<Box<dyn ExternalPrinter + Send + Sync>>>,
+    printer: Sender<PrintOperation>,
     sender: Sender<ErrorOperation>,
 }
 
 
 impl Printer {
-    pub fn new<T: ExternalPrinter + Send + Sync + 'static> (printer: T, sender: Sender<ErrorOperation>) -> Self {
-        Self { printer: Arc::new(Mutex::new(Box::new(printer))), sender }
+    pub fn new<T: ExternalPrinter + Send + Sync + 'static> (mut printer: T, sender: Sender<ErrorOperation>) -> Self {
+        let (print_tx, print_rx) = std::sync::mpsc::channel();
+
+        let print_thread = std::thread::spawn(move || {
+            for operation in print_rx {
+                match operation {
+                    PrintOperation::Print(message) => {
+                        if let Err(e) = printer.print(message.clone()) {
+                            eprintln!("Failed to print message: {}\n Original message: {}", e, message);
+                        }
+                    }
+                    PrintOperation::Close => break,
+                }
+            }
+        });
+
+       match VARIABLES.lock() {
+            Ok(mut c) => c.set_print_thread(PrintThread { thread: print_thread, sender: print_tx.clone() }),
+            Err(_) => {
+                eprintln!("couldn't lock print variables")
+            }
+        };
+
+        Self { printer: print_tx, sender }
     }
 
 pub fn reset_color() {
@@ -66,14 +130,6 @@ pub fn reset_color() {
 }
 
     pub fn print(&self, message: &str, rgb: RGB) {
-        let mut printer = match self.printer.lock() {
-            Ok(printer) => printer,
-            Err(_) => {
-                eprintln!("couldn't lock printer");
-                return;
-            }
-        };
-
         let config = if let Ok(config) = VARIABLES.lock() {
             config
         } else {
@@ -91,20 +147,13 @@ pub fn reset_color() {
         };
         mesige.push('\n');
         
-        //eprintln!(">>> Trying to print: {message}");
-        if let Err(e) = printer.print(mesige){
-            println!("Failed to print message: {}", e);
+        if let Err(e) = self.printer.send(PrintOperation::Print(mesige.clone())) {
+            eprintln!("Failed to send print operation: {:?}", e);
+            println!("{}", mesige);
         }
     }
 
     pub fn named_print(&self, plugin: &str, message: &str, rgb: RGB) {
-         let mut printer = match self.printer.lock() {
-            Ok(printer) => printer,
-            Err(_) => {
-                eprintln!("couldn't lock printer");
-                return;
-            }
-        };
 
         let config = if let Ok(config) = VARIABLES.lock() {
             config
@@ -121,17 +170,13 @@ pub fn reset_color() {
         }; 
         mesige.push('\n');
 
-        printer.print(mesige);
+        if let Err(e) = self.printer.send(PrintOperation::Print(mesige.clone())) {
+            eprintln!("Failed to send print operation: {:?}", e);
+            println!("{}", mesige);
+        }
     }
 
     pub fn print_error(&self, plugin: &str, message: &str, rgb: RGB) {
-         let mut printer = match self.printer.lock() {
-            Ok(printer) => printer,
-            Err(_) => {
-                eprintln!("couldn't lock printer");
-                return;
-            }
-        };
 
         let config = if let Ok(config) = VARIABLES.lock() {
             config
@@ -149,7 +194,9 @@ pub fn reset_color() {
             } else {
                 formatted
             };
-            printer.print(formatted);
+            if let Err(e) = self.printer.send(PrintOperation::Print(formatted.clone())) {
+                eprintln!("Failed to print message: {}\n Original message: {}", e, message);
+            }
         } else {
             if config.stderr_color {
                 let (r,g,b) = rgb.to_tuple();
@@ -172,11 +219,12 @@ pub fn send(&self, operation: ErrorOperation, plugin: &str) -> Result<(), ()> {
 impl Clone for Printer {
     fn clone(&self) -> Self {
         Printer {
-            printer: Arc::clone(&self.printer),
+            printer: self.printer.clone(),
             sender: self.sender.clone(),
         }
     }
 }
+
 
 
 
