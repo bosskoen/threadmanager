@@ -115,7 +115,31 @@ impl Manager {
     }
 
     pub fn help_message(&self, name: String) -> Result<(), ManagerError> {
-        if let Some(setting) = self.settings.apps.get(&name) {
+        if name == "errorThread"{
+            #[cfg(feature = "led")]
+            self.printer.print("errorThread: Background thread for centralized error handling and LED status control.
+
+- Logs and displays error and status messages from various system components.
+- Controls LED indicators to reflect system state (e.g. errors, warnings, operational feedback).
+- Reacts to system-wide status updates such as color changes, brightness levels, or LED resets.
+
+Note: This thread runs continuously in the background and cannot be shut down manually.", RGB::WHITE());
+            #[cfg(not(feature = "led"))]
+                        self.printer.print("errorThread: Background thread for centralized error handling.
+
+- Logs and displays error and status messages from various system components.
+- Keeps track of system state for diagnostics and user feedback.
+
+Note: This thread runs continuously in the background and cannot be shut down manually.", RGB::WHITE());
+
+            return Ok(());
+        }else if name == error_handeler::light_dimmer_thread::PLUGIN_NAME{
+                        #[cfg(feature = "led")]
+            self.printer.print(&format!("{}: Adjusts LED brightness automatically based on time of day. Can be stopped but not recommended.", error_handeler::light_dimmer_thread::PLUGIN_NAME), RGB::DEBUG());
+            #[cfg(not(feature = "led"))]
+                        self.printer.print(&format!("{}:  Disabled because LED support is not enabled.", error_handeler::light_dimmer_thread::PLUGIN_NAME), RGB::WHITE());
+            return Ok(());
+        }else if let Some(setting) = self.settings.apps.get(&name) {
             self.printer.print(&setting.help_message, RGB::WHITE());
             Ok(())
         } else {
@@ -135,6 +159,7 @@ impl Manager {
                     self.printer.print(&setting.name, RGB::WHITE());
                 }
                 self.printer.print("errorThread", RGB::TRACE());
+                #[cfg(feature = "led")]
                 self.printer.print(error_handeler::light_dimmer_thread::PLUGIN_NAME, RGB::TRACE());
             },
             Mode::Running => {
@@ -177,9 +202,9 @@ impl Manager {
         let status_clone = Arc::clone(&status);
         let stopflag = Arc::new(AtomicBool::new(false));
         let stopflag_clone = Arc::clone(&stopflag);
-        let error_sender = self.error_sender.clone();
+        let printer_clone = self.printer.clone();
         let handle = thread::spawn(move || {
-            error_handeler::light_dimmer_thread::start_light_dim(error_sender, stopflag, status);
+            error_handeler::light_dimmer_thread::start_light_dim(printer_clone, stopflag, status);
         });
 
         self.map.insert(error_handeler::light_dimmer_thread::PLUGIN_NAME.to_string(), ThreadHandel::new(handle, stopflag_clone, status_clone));
@@ -198,6 +223,7 @@ impl Manager {
         }
         if self.map.contains_key(&error_handeler::light_dimmer_thread::PLUGIN_NAME.to_string()) {
             if let Some(thread) = self.map.remove(&error_handeler::light_dimmer_thread::PLUGIN_NAME.to_string()) {
+                self.printer.print("Stopping light dimmer thread", RGB::NOTICE());
                 thread.stop_flag.store(true, std::sync::atomic::Ordering::Relaxed);
                 if let Err(x) = thread.handle.join() {
                     self.printer.print_error("Manager", &format!("ErrorThread panicked while closing with error\n{:?}", x), RGB::ERROR());
@@ -226,6 +252,21 @@ impl Manager {
                 return;
             },
         }
+    }
+
+    pub fn get_list_all_apps(&self) -> Vec<String> {
+        self.settings.apps.keys().cloned().collect()
+    }
+
+    pub fn get_list_running_apps(&self) -> Vec<String> {
+        self.map.keys().cloned().collect()
+    }
+
+    pub fn get_list_stopped_apps(&self) -> Vec<String> {
+        self.settings.apps.keys()
+            .filter(|name| !self.map.contains_key(*name))
+            .cloned()
+            .collect()
     }
 }
 
@@ -339,7 +380,7 @@ fn thread_logic(dll_path: &str, name: String, printer: Printer, stop_flag: Arc<A
 }
 
 fn report_error(printer: &Printer, crash_notifier: &Sender<String>, name: String, error_message: String) {
-    if let Err(_) = printer.send(ErrorOperation::Print(name.clone(), error_message.clone(), RGB::ERROR()), &name) {
+    if let Err(_) = printer.send(ErrorOperation::PrintError(name.clone(), error_message.clone(), RGB::ERROR()), &name) {
         printer.print_error("Manager", &format!("Error while sending error from {name}: {error_message}"), RGB::CRITICAL_ERROR());
         exit(ERROR_THREAD_DOWN);
     }
@@ -355,7 +396,7 @@ fn send_crash_notifier(crash_notifier: &Sender<String>, name: String, printer: &
 
 #[derive(Deserialize)]
 struct Settings {
-    //TODO logic for downloading plugins
+    //TODO logic for downloading plugins (maby feature)
     #[allow(dead_code)]
     update: HashMap<String, String>,
     

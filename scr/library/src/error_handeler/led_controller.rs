@@ -389,7 +389,7 @@ pub mod led {
 
 #[cfg(not(feature = "GPIO"))]
 pub mod led {
-    use crate::error_handeler::{print_interup, RGB, LedNumber};
+    use crate::error_handeler::{RGB, LedNumber};
 
     #[derive(Debug)]
    pub enum LedError{
@@ -425,105 +425,105 @@ pub mod led {
             Ok(Self { color, brightness: led_level })
         }
         pub fn off(&mut self) {
-            print_interup("led_controler","LED turned off", RGB::NOTICE());
+            println!("led_controler LED turned off");
         }
         pub fn on(&mut self) {
-            print_interup("led_controler","LED turned on", RGB::NOTICE());
+            println!("led_controler LED turned on");
         }
         pub fn set_color(&mut self, color: RGB, led_number: LedNumber)-> Result<(), LedError> {
             self.color[led_number as usize] = color;
-            print_interup("led_controler", &format!("{} color set to {:?}", led_number, color), RGB::NOTICE());
+            println!("led_controler {} color set to {:?}", led_number, color);
             Ok(())
         }
 
         pub fn set_brightness(&mut self, level: u8, led_number: LedNumber)-> Result<(), LedError> {
             self.brightness[led_number as usize] = level;
-            print_interup("led_controler", &format!("{} brightness set to {}", led_number, level), RGB::NOTICE());
+            println!("led_controler {} brightness set to {}", led_number, level);
             Ok(())
         }
         pub fn set_color_all(&mut self, color: [RGB; 5]) -> Result<(), LedError>{
             self.color = color;
-            print_interup("led_controler", "All LED colors set", RGB::NOTICE());
+            println!("led_controler All LED colors set");
             Ok(())
         }
 
         pub fn set_brightness_all(&mut self, level: [u8; 5]) -> Result<(), LedError>{
             self.brightness = level;
-            print_interup("led_controler", "All LED brightness levels set", RGB::NOTICE());
+            println!("led_controler All LED brightness levels set");
             Ok(())
         }
         
         pub fn red_on(&mut self, _led_number:LedNumber) -> Result<(), LedError>{
-            print_interup("led_controler","Red LED turned on", RGB::NOTICE());
+            println!("led_controler Red LED turned on");
             Ok(())
         }
         pub fn red_off(&mut self, _led_number:LedNumber)-> Result<(), LedError> {
-            print_interup("led_controler","Red LED turned off", RGB::NOTICE());
+            println!("led_controler Red LED turned off");
             Ok(())
         }
         pub fn red_reset(&mut self, _led_number:LedNumber) -> Result<(), LedError>{
-            print_interup("led_controler","Red LED reset", RGB::NOTICE());
+            println!("led_controler Red LED reset");
             Ok(())
         }
         pub fn green_on(&mut self, _led_number:LedNumber) -> Result<(), LedError>{
-            print_interup("led_controler","Green LED turned on", RGB::NOTICE());
+            println!("led_controler Green LED turned on");
             Ok(())
         }
         pub fn green_off(&mut self, _led_number:LedNumber)-> Result<(), LedError> {
-            print_interup("led_controler","Green LED turned off", RGB::NOTICE());
+            println!("led_controler Green LED turned off");
             Ok(())
         }
         pub fn green_reset(&mut self, _led_number:LedNumber) -> Result<(), LedError>{
-            print_interup("led_controler","Green LED reset", RGB::NOTICE());
+            println!("led_controler Green LED reset");
             Ok(())
         }
         pub fn blue_on(&mut self, _led_number:LedNumber) -> Result<(), LedError>{
-            print_interup("led_controler","Blue LED turned on", RGB::NOTICE());
+            println!("led_controler Blue LED turned on");
             Ok(())
         }
         pub fn blue_off(&mut self, _led_number:LedNumber) -> Result<(), LedError>{
-            print_interup("led_controler","Blue LED turned off", RGB::NOTICE());
+            println!("led_controler Blue LED turned off");
             Ok(())
         }
         pub fn blue_reset(&mut self, _led_number:LedNumber) -> Result<(), LedError>{
-            print_interup("led_controler", "Blue LED reset", RGB::NOTICE());
+            println!("led_controler Blue LED reset");
             Ok(())
         }
 
         pub fn red_reset_all(&mut self) -> Result<(), LedError>{
-            print_interup("led_controler","All Red LEDs reset", RGB::NOTICE());
+            println!("led_controler All Red LEDs reset");
             Ok(())
         }
         pub fn green_reset_all(&mut self) -> Result<(), LedError>{
-            print_interup("led_controler","All Green LEDs reset", RGB::NOTICE());
+            println!("led_controler All Green LEDs reset");
             Ok(())
         }
         pub fn blue_reset_all(&mut self) -> Result<(), LedError>{
-            print_interup("led_controler","All Blue LEDs reset", RGB::NOTICE());
+            println!("led_controler All Blue LEDs reset");
             Ok(())
         }
         pub fn red_off_all(&mut self) -> Result<(), LedError>{
-            print_interup("led_controler","All Red LEDs turned off", RGB::NOTICE());
+            println!("led_controler All Red LEDs turned off");
             Ok(())
         }
         pub fn green_off_all(&mut self) -> Result<(), LedError>{
-            print_interup("led_controler","All Green LEDs turned off", RGB::NOTICE());
+            println!("led_controler All Green LEDs turned off");
             Ok(())
         }
         pub fn blue_off_all(&mut self) -> Result<(), LedError>{
-            print_interup("led_controler","All Blue LEDs turned off", RGB::NOTICE());
+            println!("led_controler All Blue LEDs turned off");
             Ok(())
         }
         pub fn red_on_all(&mut self) -> Result<(), LedError>{
-            print_interup("led_controler","All Red LEDs turned on", RGB::NOTICE());
+            println!("led_controler All Red LEDs turned on");
             Ok(())
         }
         pub fn green_on_all(&mut self) -> Result<(), LedError>{
-            print_interup("led_controler","All Green LEDs turned on", RGB::NOTICE());
+            println!("led_controler All Green LEDs turned on");
             Ok(())
         }
         pub fn blue_on_all(&mut self) -> Result<(), LedError>{
-            print_interup("led_controler","All Blue LEDs turned on", RGB::NOTICE());
+            println!("led_controler All Blue LEDs turned on");
             Ok(())
         }
     }

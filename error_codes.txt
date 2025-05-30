@@ -8,3 +8,4 @@
 107: Failed to start ThreadManager
 108: Failed to initialize light dimmer thread status
 109: Failed to start rustyline cli
+110: Failed to lock open_threads

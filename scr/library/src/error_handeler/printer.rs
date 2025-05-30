@@ -1,4 +1,4 @@
-use std::{io::{stderr, stdout, Write}, sync::{mpsc::Sender, Arc, Mutex}, thread::JoinHandle};
+use std::{io::{stderr, stdout, Write}, sync::{mpsc::Sender, Mutex}, thread::JoinHandle};
 
 use rustyline::ExternalPrinter;
 

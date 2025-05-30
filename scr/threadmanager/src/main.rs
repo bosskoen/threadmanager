@@ -1,11 +1,12 @@
 use std::{
     env,
     process::exit,
-    sync::mpsc,
+    sync::{mpsc, Mutex},
 };
 
 mod atexit;
 
+use cli::MyCompleter;
 use library::error_handeler::{cleanup_static, RGB};
 use private_lib::*;
 use library::rustyline::{self, config::Configurer, error::ReadlineError};
@@ -14,6 +15,8 @@ mod private_lib;
 
 const FAILED_TO_START_THREADMANIGER: i32 = 107;
 const FAILED_TO_START_CLI: i32 = 109;
+const FAILED_TO_LOCK_OPEN_THREADS: i32 = 110;
+
 const MAX_CLI_HISTORY_SIZE: usize = 100;
 
 fn main() {
@@ -51,10 +54,11 @@ fn main() {
         settings_path = &arg[1];
     }
 
-    let mut rl = rustyline::Editor::<(), _>::new().unwrap_or_else(|err| {
+    let mut rl = rustyline::Editor::<MyCompleter, _>::with_config(rustyline::config::Config::builder().bell_style(rustyline::config::BellStyle::None).build()).unwrap_or_else(|err| {
         eprint!("\nFailed to create rustyline editor: {}  in main", err);
-        exit(FAILED_TO_START_THREADMANIGER);
-    }); // TODO test interupts / drop on exit
+        exit(FAILED_TO_START_CLI);
+    });
+    //rl.set_bell_style(rustyline::config::BellStyle::None);
 
     rl.set_max_history_size(MAX_CLI_HISTORY_SIZE)
         .unwrap_or_else(|err| {
@@ -62,6 +66,8 @@ fn main() {
         });
     rl.set_auto_add_history(true);
     let external_printer = rl.create_external_printer().unwrap();
+
+   
 
     let (error_tx, error_rx) = mpsc::channel();
     let (crach_tx, crach_rx) = mpsc::channel::<String>();
@@ -82,7 +88,7 @@ fn main() {
 
     printer.print("CLI Plugin Manager", RGB::CYAN());
 
-    let mut open_threads = match Manager::new(printer.clone(), settings_path, crach_tx) {
+    let open_threads = Mutex::new( match Manager::new(printer.clone(), settings_path, crach_tx) {
         Ok(threads) => threads,
         Err(err) => {
             printer.print_error(
@@ -92,18 +98,28 @@ fn main() {
             );
             exit(FAILED_TO_START_THREADMANIGER);
         }
-    };
+    });
+    rl.set_helper(Some(cli::MyCompleter::new(&open_threads)));
 
-    open_threads.start_error(error_rx);
+    open_threads.lock().unwrap_or_else(|err| {
+            printer.print_error("main", &format!("Failed to lock open threads: {}", err), RGB::ERROR());
+            exit(FAILED_TO_LOCK_OPEN_THREADS);
+    }).start_error(error_rx);
+    
 
 
     let cli = cli::initialise_cli();
 
     loop {
-
-        crach_rx.try_iter().for_each(|msg| {
-            let _ = open_threads.stop_thread(msg);
-        });
+        {
+            let mut thread_data= open_threads.lock().unwrap_or_else(|err| {
+                printer.print_error("main", &format!("Failed to lock open threads: {}", err), RGB::ERROR());
+                exit(FAILED_TO_LOCK_OPEN_THREADS);
+            });
+            crach_rx.try_iter().for_each(|msg| {
+                let _ = thread_data.stop_thread(msg);
+            });
+        }
 
         match rl.readline("> ") {
             Ok(line) => {
@@ -117,7 +133,11 @@ fn main() {
                     break;
                 }
                 if let Some(func) = cli.get(command) {
-                    func(args.collect::<Vec<&str>>().as_slice(), &mut open_threads, &printer);
+                    let mut thread_data = open_threads.lock().unwrap_or_else(|err| {
+                        printer.print_error("main", &format!("Failed to lock open threads: {}", err), RGB::ERROR());
+                        exit(FAILED_TO_LOCK_OPEN_THREADS);
+                    });
+                    func(args.collect::<Vec<&str>>().as_slice(), &mut *thread_data, &printer);
                 } else {
                     printer.print(
                         "Command not found. Type 'help' for a list of commands.",
@@ -144,3 +164,6 @@ fn main() {
 
 
 //TODO replace exit with memory safe exit
+//TODO test bz plugin
+//TODO set up exe or raspbery
+//TODO test led pwm on raspberry

@@ -3,5 +3,5 @@ name = "template_plugin"
 
 #settings
 #updateble
-step_rate = 5
-update_rate = 10
+step_rate = 3
+update_rate = 7

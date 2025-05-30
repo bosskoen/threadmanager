@@ -146,11 +146,11 @@ impl From<usize> for LedNumber{
 
 pub enum ErrorOperation {
     /// the first string is the plugin name, the second is the message, the third is the text color
-    Print(String, String, RGB),
+    PrintError(String, String, RGB),
     /// the bool is to indicate if the color change is an error or not (true = error, false = non error)
     ChangeLed(RGB, bool, LedNumber),
     /// the first string is the plugin name, the second is the message, the third is the text color, the fourth is the led color and the fifth is the led number
-    PrintAndChangeLed(String, String, RGB, RGB,LedNumber),
+    NonErrorPrintAndChangeLed(String, String, RGB, RGB,LedNumber),
     /// the first string is the plugin name, the second is the message, the third is the text color, the fourth is the led color and the fifth is the led number
     PrintAndChangeLedError(String, String, RGB, RGB, LedNumber),
     /// the first string is the plugin name, the second is the message, the third is the text color
@@ -180,22 +180,22 @@ pub fn error_catchloop(receiver: Receiver<ErrorOperation>, mut printer: Printer,
             led_controller::led::LedController::new([RGB::GREEN(), RGB::BLACK(), RGB::BLACK(), RGB::BLACK(), RGB::BLACK()], [LED_DAY_BRIGHTNESS; 5])
         }
     }.unwrap_or_else(|err| {
-        print_error("errorThread",&format!("couldn't initialize led controler: \n {}", err), RGB::CRITICAL_ERROR());
+        printer.print_error("errorThread",&format!("couldn't initialize led controler: \n {}", err), RGB::CRITICAL_ERROR());
         led_controller::led::LedController::dummy()
     });
 
     for error in receiver.iter() {
         match error {
-            ErrorOperation::Print(plugin, message, color) => {
+            ErrorOperation::PrintError(plugin, message, color) => {
                         printer.print_error(&plugin, &message, color);
                         update_status_error(&status, ChangeColor::No, &mut printer);
                     },
-            ErrorOperation::ChangeLed(rgb, is_error, led) => {
+            ErrorOperation::ChangeLed(rgb, is_error, _led) => {
                         #[cfg(feature = "led")]
-                        change_led_color(&mut led_controler, rgb, led).unwrap_or_else(|err| {
+                        change_led_color(&mut led_controler, rgb, _led).unwrap_or_else(|err| {
                             printer.print_error(
                                 "errorThread",
-                                &format!("Failed to change {} color to {:?}: {}", led,rgb, err),
+                                &format!("Failed to change {} color to {:?}: {}", _led,rgb, err),
                                 RGB::CRITICAL_ERROR(),
                             );
                             ()}
@@ -203,13 +203,13 @@ pub fn error_catchloop(receiver: Receiver<ErrorOperation>, mut printer: Printer,
 
                         update_status(&status, ChangeColor::Yes(rgb), is_error, &mut printer);
                     },
-            ErrorOperation::PrintAndChangeLedError(plugin, message, color, rgb,led) => {
+            ErrorOperation::PrintAndChangeLedError(plugin, message, color, rgb,_led) => {
 
                         #[cfg(feature = "led")]
-                        change_led_color(&mut led_controler, rgb,led).unwrap_or_else(|err| {
+                        change_led_color(&mut led_controler, rgb,_led).unwrap_or_else(|err| {
                             printer.print_error(
                                 "errorThread",
-                                &format!("Plugin '{}' failed to change {} color to {:?}: {}", plugin, led,rgb, err),
+                                &format!("Plugin '{}' failed to change {} color to {:?}: {}", plugin, _led,rgb, err),
                                 RGB::CRITICAL_ERROR(),
                             );
                             ()}
@@ -222,33 +222,33 @@ pub fn error_catchloop(receiver: Receiver<ErrorOperation>, mut printer: Printer,
             ErrorOperation::NonErrorPrint(plugin, message, rgb) => {
                         printer.named_print(&plugin, &message, rgb);
                     },
-            ErrorOperation::CangeBrighness(new_brightness, led) => {
+            ErrorOperation::CangeBrighness(_new_brightness, _led) => {
                         #[cfg(feature = "led")]
-                        change_led_brightness(&mut led_controler, new_brightness, led).unwrap_or_else(|err| {
+                        change_led_brightness(&mut led_controler, _new_brightness, _led).unwrap_or_else(|err| {
                             printer.print_error(
                                 "errorThread",
-                                &format!("Failed to change {} brightness to {}: {}", led,new_brightness, err),
+                                &format!("Failed to change {} brightness to {}: {}", _led,_new_brightness, err),
                                 RGB::CRITICAL_ERROR(),
                             );
                             ()
                         });
                     },
-            ErrorOperation::RestColor(led_option,led) => {
+            ErrorOperation::RestColor(_led_option,_led) => {
                         #[cfg(feature = "led")]
-                        reset_color_led(&mut led_controler, led_option,led).unwrap_or_else(|err| {
-                           printer.print_error("errorThread", &format!("Failed to reset {} {} : {}", led_option,led,err), RGB::CRITICAL_ERROR());
+                        reset_color_led(&mut led_controler, _led_option,_led).unwrap_or_else(|err| {
+                           printer.print_error("errorThread", &format!("Failed to reset {} {} : {}", _led_option,_led,err), RGB::CRITICAL_ERROR());
                         });
                     },
-            ErrorOperation::OffColor(led_option,led) => {
+            ErrorOperation::OffColor(_led_option,_led) => {
                         #[cfg(feature = "led")]
-                        color_off(&mut led_controler, led_option,led).unwrap_or_else(|err| {
-                            printer.print_error("errorThread", &format!("Failed to turn OFF {} {} : {}", led_option,led, err), RGB::CRITICAL_ERROR());
+                        color_off(&mut led_controler, _led_option,_led).unwrap_or_else(|err| {
+                            printer.print_error("errorThread", &format!("Failed to turn OFF {} {} : {}", _led_option,_led, err), RGB::CRITICAL_ERROR());
                         });
                     },
-            ErrorOperation::OnColor(led_option,led) => {
+            ErrorOperation::OnColor(_led_option,_led) => {
                         #[cfg(feature = "led")]
-                        color_on(&mut led_controler, led_option,led).unwrap_or_else(|err| {
-                            printer.print_error("errorThread", &format!("Failed to turn ON {} {} : {}", led_option,led, err), RGB::CRITICAL_ERROR());
+                        color_on(&mut led_controler, _led_option,_led).unwrap_or_else(|err| {
+                            printer.print_error("errorThread", &format!("Failed to turn ON {} {} : {}", _led_option,_led, err), RGB::CRITICAL_ERROR());
                         });
                     },
             ErrorOperation::PWM(_pwmoption) => {
@@ -259,18 +259,18 @@ pub fn error_catchloop(receiver: Receiver<ErrorOperation>, mut printer: Printer,
                             led_controler.on();
                         }
                     },
-            ErrorOperation::PrintAndChangeLed(plugin, message, color, rgb, led_number) => {
+            ErrorOperation::NonErrorPrintAndChangeLed(plugin, message, color, rgb, _led_number) => {
                 #[cfg(feature = "led")]
-                change_led_color(&mut led_controler, rgb,led_number).unwrap_or_else(|err| {
+                change_led_color(&mut led_controler, rgb,_led_number).unwrap_or_else(|err| {
                     printer.print_error(
                         "errorThread",
-                        &format!("Plugin '{}' failed to change {} color to {:?}: {}", plugin, led_number,rgb, err),
+                        &format!("Plugin '{}' failed to change {} color to {:?}: {}", plugin, _led_number,rgb, err),
                         RGB::CRITICAL_ERROR(),
                     );
                     ()}
                 );
 
-                printer.print_error(&plugin, &message, color);
+                printer.named_print(&plugin, &message, color);
                 update_status(&status, ChangeColor::Yes(rgb), false, &mut printer);
             },
         }

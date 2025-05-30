@@ -1,5 +1,5 @@
-use std::{sync::{atomic::{AtomicBool, Ordering}, mpsc::Sender, Arc, Mutex}, thread, time::{Duration, SystemTime}};
-use library::*;
+use std::{sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex}, thread, time::{Duration, SystemTime}};
+use library::{error_handeler::Printer, *};
 use data_base_manager::{rusqlite::{self, ToSql}, ColumnDefinition, Connection, DataBaseError, SQLReadable, SQLformat};
 use error_handeler::{ErrorOperation, RGB};
 use parsing::BzData;
@@ -12,7 +12,7 @@ const APP_NAME: &str = "get_bz_pricing";
 const WARNGING_ORANGE: RGB = RGB::from_hex(0xff7d00);
 
 #[no_mangle]
-pub fn start(error_handel: Sender<ErrorOperation>, stopflag: Arc<AtomicBool>, status: Arc<Mutex<Box<dyn Status>>>, settings_path: String) -> Result<(), Box<dyn std::error::Error>>{
+pub fn start(mut printer: Printer, stopflag: Arc<AtomicBool>, status: Arc<Mutex<Box<dyn Status>>>, settings_path: String) -> Result<(), Box<dyn std::error::Error>>{
 
     let mut context = Context::from(stopflag, status, settings_path)?;
 
@@ -24,9 +24,9 @@ pub fn start(error_handel: Sender<ErrorOperation>, stopflag: Arc<AtomicBool>, st
         }
         if context.time_passed >= context.update_rate{
             context.time_passed = 0;
-            get_bz_data(&error_handel, &mut context).map_err(|err|match err {
+            get_bz_data(&mut printer, &mut context).map_err(|err|match err {
                 PricingError::ErrorThreadDown(messige) => Box::new(ErrorThreadDownError::new(APP_NAME, &messige)),
-                _ => { if let Err(_) = error_handel.send(ErrorOperation::PrintAndChangeLedError(APP_NAME.to_string(),format!("error while getting data from api, retrying next cycle\n{err}"), RGB::ERROR(), WARNGING_ORANGE, error_handeler::LedNumber::LED2))
+                _ => { if let Err(_) = printer.send(ErrorOperation::PrintAndChangeLedError(APP_NAME.to_string(),format!("error while getting data from api, retrying next cycle\n{err}"), RGB::ERROR(), WARNGING_ORANGE, error_handeler::LedNumber::LED2), APP_NAME)
                     { return Box::new(ErrorThreadDownError::new(APP_NAME, "")) as Box<dyn std::error::Error>; };
                 Box::new(err) as Box<dyn std::error::Error> }
             })?;
@@ -37,7 +37,7 @@ pub fn start(error_handel: Sender<ErrorOperation>, stopflag: Arc<AtomicBool>, st
         let endloop =match start_of_loop.elapsed() {
             Ok(duration) => duration,
             Err(error) => {
-                if let Err(_) = error_handel.send(ErrorOperation::PrintAndChangeLed(APP_NAME.to_string(),format!("error while getting elapsed time: {error}"), RGB::ERROR(), WARNGING_ORANGE, error_handeler::LedNumber::LED2)){
+                if let Err(_) = printer.send(ErrorOperation::PrintAndChangeLedError(APP_NAME.to_string(),format!("error while getting elapsed time: {error}"), RGB::ERROR(), WARNGING_ORANGE, error_handeler::LedNumber::LED2), APP_NAME){
                     return Err(Box::new(ErrorThreadDownError::new(APP_NAME,&format!("error while getting elapsed time: {error}"))));
                 } 
                 Duration::ZERO
@@ -47,7 +47,7 @@ pub fn start(error_handel: Sender<ErrorOperation>, stopflag: Arc<AtomicBool>, st
         if let Some(sleep_duration) = Duration::from_secs(context.step_rate as u64).checked_sub(endloop) {
             thread::sleep(sleep_duration);
         } else {
-            if let Err(_) = error_handel.send(ErrorOperation::PrintAndChangeLed(APP_NAME.to_string(),"loop took too long".to_string(), RGB::WARNING(), RGB::INFO(), error_handeler::LedNumber::LED2)){
+            if let Err(_) = printer.send(ErrorOperation::PrintAndChangeLedError(APP_NAME.to_string(),"loop took too long".to_string(), RGB::WARNING(), RGB::INFO(), error_handeler::LedNumber::LED2), APP_NAME){
                 return Err(Box::new(ErrorThreadDownError::new(APP_NAME, "loop took too long")));
             }
             context.time_passed += (endloop.saturating_sub(Duration::from_secs(context.step_rate as u64))).as_secs() as usize;
@@ -223,9 +223,9 @@ fn ensure_column_exists(conn: &Connection, table_name: &str, column_name: &str, 
     Ok(())
 }
 
-fn get_data_from_api(error_handel: &Sender<ErrorOperation>, context: &Context)-> Result<(BzData,(usize,usize)), PricingError> {
+fn get_data_from_api(printer: &mut Printer, context: &Context)-> Result<(BzData,(usize,usize)), PricingError> {
     let data = web_service_adapter::get_data_plus_size(&context.url, 3, Duration::from_secs(3)).map_err(|err| {
-        if let Err(_) = error_handel.send(ErrorOperation::PrintAndChangeLedError(APP_NAME.to_string(), format!("error while fetching data from api, retrying next cycle\n{err}"), RGB::WARNING(), WARNGING_ORANGE, error_handeler::LedNumber::LED2)){
+        if let Err(_) = printer.send(ErrorOperation::PrintAndChangeLedError(APP_NAME.to_string(), format!("error while fetching data from api, retrying next cycle\n{err}"), RGB::WARNING(), WARNGING_ORANGE, error_handeler::LedNumber::LED2), APP_NAME){
             return PricingError::ErrorThreadDown(format!("error while fetching data from api, retrying next cycle\n{err}"));
         }
         PricingError::NonFatal
@@ -236,13 +236,13 @@ fn get_data_from_api(error_handel: &Sender<ErrorOperation>, context: &Context)->
     let json_data = BzData::from_data(data.text).map_err(|err|
     match err {
         PricingError::JSONReadError => {
-            if let Err(_) = error_handel.send(ErrorOperation::PrintAndChangeLedError(APP_NAME.to_string(),"error while parsing the json, retrying next cycle".to_string(), RGB::ERROR(), WARNGING_ORANGE, error_handeler::LedNumber::LED2)){
+            if let Err(_) = printer.send(ErrorOperation::PrintAndChangeLedError(APP_NAME.to_string(),"error while parsing the json, retrying next cycle".to_string(), RGB::ERROR(), WARNGING_ORANGE, error_handeler::LedNumber::LED2), APP_NAME){
                 return PricingError::ErrorThreadDown("error while parsing the json, retrying next cycle".to_string());
             }
             PricingError::NonFatal
         },
         PricingError::JSONFormatError(message) => {
-            if let Err(_) = error_handel.send(ErrorOperation::PrintAndChangeLedError(APP_NAME.to_string(),format!("error while parsing the json, retrying next cycle\n{message}"), RGB::ERROR(), WARNGING_ORANGE, error_handeler::LedNumber::LED2)){
+            if let Err(_) = printer.send(ErrorOperation::PrintAndChangeLedError(APP_NAME.to_string(),format!("error while parsing the json, retrying next cycle\n{message}"), RGB::ERROR(), WARNGING_ORANGE, error_handeler::LedNumber::LED2), APP_NAME){
                 return PricingError::ErrorThreadDown(format!("error while parsing the json, retrying next cycle\n{message}"));
             }
             PricingError::NonFatal
@@ -251,7 +251,7 @@ fn get_data_from_api(error_handel: &Sender<ErrorOperation>, context: &Context)->
     })?;
 
     if !json_data.success {
-        if let Err(_) = error_handel.send(ErrorOperation::PrintAndChangeLedError(APP_NAME.to_string(),"JSON had an unexpected error, retrying next cycle".to_string(), RGB::ERROR(), WARNGING_ORANGE, error_handeler::LedNumber::LED2)){
+        if let Err(_) = printer.send(ErrorOperation::PrintAndChangeLedError(APP_NAME.to_string(),"JSON had an unexpected error, retrying next cycle".to_string(), RGB::ERROR(), WARNGING_ORANGE, error_handeler::LedNumber::LED2), APP_NAME){
             return Err(PricingError::ErrorThreadDown("JSON had an unexpected error, retrying next cycle".to_string()));
         }
         return Err(PricingError::NonFatal);
@@ -260,7 +260,7 @@ fn get_data_from_api(error_handel: &Sender<ErrorOperation>, context: &Context)->
     Ok((json_data, (data.sent_bytes, data.received_bytes)))
 }
 
-fn update_index_database(json_data: &BzData, context: &mut Context, error_handel: &Sender<ErrorOperation>) -> Result<(), PricingError> {
+fn update_index_database(json_data: &BzData, context: &mut Context, printer: &mut Printer) -> Result<(), PricingError> {
     struct Name {
         name: String
     }
@@ -274,7 +274,7 @@ fn update_index_database(json_data: &BzData, context: &mut Context, error_handel
     .collect();
 
     if data_base_manager::try_write_database(&mut context.conn, hypixel_ids, &context.lookup_table_name, "HypixelID")? > 0 {
-        if let Err(_) = error_handel.send(ErrorOperation::PrintAndChangeLed(APP_NAME.to_string(),"new item added to the database, requires manual naming.".to_string(), RGB::INFO(), RGB::MAGENTA(), error_handeler::LedNumber::LED2)){
+        if let Err(_) = printer.send(ErrorOperation::NonErrorPrintAndChangeLed(APP_NAME.to_string(),"new item added to the database, requires manual naming.".to_string(), RGB::INFO(), RGB::MAGENTA(), error_handeler::LedNumber::LED2), APP_NAME){
             return Err(PricingError::ErrorThreadDown("new item added to the database, requires manual naming.".to_string()));
         }
     };
@@ -282,7 +282,7 @@ fn update_index_database(json_data: &BzData, context: &mut Context, error_handel
     Ok(())
 }
 
-fn write_database(context: &mut Context, json_data: BzData, error_handel: &Sender<ErrorOperation>) -> Result<(bool, String), PricingError> {
+fn write_database(context: &mut Context, json_data: BzData, printer: &mut Printer) -> Result<(bool, String), PricingError> {
     struct BazaData {
         id: usize,
         time_stamp: u64,
@@ -327,7 +327,7 @@ fn write_database(context: &mut Context, json_data: BzData, error_handel: &Sende
                 })
             },
             Err(e) => {
-                if let Err(_) = error_handel.send(ErrorOperation::PrintAndChangeLedError(APP_NAME.to_string(), format!("couldn't read product id \"{}\" from database\nError: {}", value.product_id, e), RGB::ERROR(), RGB::ERROR(), error_handeler::LedNumber::LED2)){
+                if let Err(_) = printer.send(ErrorOperation::PrintAndChangeLedError(APP_NAME.to_string(), format!("couldn't read product id \"{}\" from database\nError: {}", value.product_id, e), RGB::ERROR(), RGB::ERROR(), error_handeler::LedNumber::LED2), APP_NAME) {
                     error_send_failed = true;
                     error_message.push(format!("couldn't read product id \"{}\" from database\nError: {}", value.product_id, e));
                 }
@@ -342,20 +342,20 @@ fn write_database(context: &mut Context, json_data: BzData, error_handel: &Sende
     Ok((error_send_failed, error_message.join(";\n")))
 }
 
-fn get_bz_data(error_handel: &Sender<ErrorOperation>, context: &mut Context) -> Result<(), PricingError> {
+fn get_bz_data(printer: &mut Printer, context: &mut Context) -> Result<(), PricingError> {
     // get data
-    let json_data = get_data_from_api(error_handel, context);
+    let json_data = get_data_from_api(printer, context);
     if let Err(PricingError::NonFatal) = json_data {
         return Ok(());
     }
     let (json_data, (data_out, data_in)) = json_data?;
 
     // write new items
-    update_index_database(&json_data, context, error_handel)?;
+    update_index_database(&json_data, context, printer)?;
 
     // write to database
     let num_items = json_data.products.len();
-    let (error_send_failed, error_message) = write_database(context, json_data, error_handel)?;
+    let (error_send_failed, error_message) = write_database(context, json_data,  printer)?;
 
     context.update_status(num_items, data_in + data_out)?;
 
