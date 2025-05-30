@@ -12,7 +12,7 @@ mod printer;
 
 pub use printer::{Printer, cleanup_static};
 
-use std::{process::exit, sync::{mpsc::Receiver, Arc, Mutex}};
+use std::{sync::{mpsc::Receiver, Arc, Mutex}};
 use chrono::{DateTime, Local};
 use crate::{format_duration, Status};
 
@@ -278,27 +278,51 @@ pub fn error_catchloop(receiver: Receiver<ErrorOperation>, mut printer: Printer,
 }
 
 fn initialize_status(status: &Arc<Mutex<Box<dyn Status>>>, printer: &mut Printer) {
-    *(status.lock().unwrap_or_else(|_| {
-        printer.print_error("errorThread","couldn't initialize error status", RGB::CRITICAL_ERROR());
-        exit(INITIOLIZE_STATUS_ERROR); 
-    })) = Box::new(ErrorStatus::new());
+    match status.lock() {
+        Ok(mut stat) => {
+            *stat = Box::new(ErrorStatus::new());
+        },
+        Err(_) => {
+            printer.print_error("errorThread","couldn't lock error status", RGB::CRITICAL_ERROR());
+            printer.print(
+                &format!("exited with exit code {}", INITIOLIZE_STATUS_ERROR),
+                RGB::WHITE(),
+            );
+            Printer::close_program();
+        }
+        
+    }
 }
 
 
 fn update_status(status: &Arc<Mutex<Box<dyn Status>>>, new_color: ChangeColor, is_error: bool, printer: &mut Printer) {
-    if let Some(status) = (*status.lock().unwrap_or_else(|_| {
-        printer.print_error("errorThread","couldn't lock error status", RGB::CRITICAL_ERROR());
-        exit(ERROR_STATUS_LOCK_FAILED);
-    })).as_any_mut().downcast_mut::<ErrorStatus>() {
-        if is_error{
-        status.errors += 1;
+
+    match status.lock() {
+        Ok(mut stat) => {
+            if let Some(status) = (*stat).as_any_mut().downcast_mut::<ErrorStatus>() {
+                if is_error {
+                    status.errors += 1;
+                }
+                if let ChangeColor::Yes(rgb) = new_color {
+                    status.color = rgb;
+                }
+            } else {
+                printer.print_error("errorThread","Status isn't of type ErrorStatus", RGB::CRITICAL_ERROR()); 
+                printer.print(
+                    &format!("exited with exit code {}", ERROR_STATUS_NOT_ERROR_STATUS),
+                    RGB::WHITE(),
+                );
+                Printer::close_program();
+            }
+        },
+        Err(_) => {
+            printer.print_error("errorThread","couldn't lock error status", RGB::CRITICAL_ERROR());
+            printer.print(
+                &format!("exited with exit code {}", ERROR_STATUS_LOCK_FAILED),
+                RGB::WHITE(),
+            );
+            Printer::close_program();
         }
-        if let ChangeColor::Yes(rgb) = new_color {
-            status.color = rgb;
-        }
-    } else {
-        printer.print_error("errorThread","Status isn't of type ErrorStatus", RGB::CRITICAL_ERROR()); 
-        exit(ERROR_STATUS_NOT_ERROR_STATUS);
     }
 }
 

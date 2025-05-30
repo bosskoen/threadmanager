@@ -1,28 +1,28 @@
 use std::{
     env,
-    process::exit,
-    sync::{mpsc, Mutex},
+    process::ExitCode,
+    sync::{mpsc, Mutex}, thread::{self, sleep, Thread}, time::Duration,
 };
 
 mod atexit;
 
 use cli::MyCompleter;
-use library::error_handeler::{cleanup_static, RGB};
-use private_lib::*;
+use library::error_handeler::{cleanup_static, Printer, RGB};
 use library::rustyline::{self, config::Configurer, error::ReadlineError};
+use private_lib::*;
 mod cli;
 mod private_lib;
 
-const FAILED_TO_START_THREADMANIGER: i32 = 107;
-const FAILED_TO_START_CLI: i32 = 109;
-const FAILED_TO_LOCK_OPEN_THREADS: i32 = 110;
+const FAILED_TO_START_THREADMANIGER: u8 = 107;
+const FAILED_TO_START_CLI: u8 = 109;
+const FAILED_TO_LOCK_OPEN_THREADS: u8 = 110;
 
 const MAX_CLI_HISTORY_SIZE: usize = 100;
 
-fn main() {
+fn main() -> ExitCode {
     let mut atexit = atexit::CleanupRegistry::new();
 
-    atexit.register(||{cleanup_static()});
+    atexit.register(|| cleanup_static());
 
     let settings_path;
     let arg = env::args().collect::<Vec<String>>();
@@ -54,11 +54,17 @@ fn main() {
         settings_path = &arg[1];
     }
 
-    let mut rl = rustyline::Editor::<MyCompleter, _>::with_config(rustyline::config::Config::builder().bell_style(rustyline::config::BellStyle::None).build()).unwrap_or_else(|err| {
-        eprint!("\nFailed to create rustyline editor: {}  in main", err);
-        exit(FAILED_TO_START_CLI);
-    });
-    //rl.set_bell_style(rustyline::config::BellStyle::None);
+    let mut rl = match rustyline::Editor::<MyCompleter, _>::with_config(
+        rustyline::config::Config::builder()
+            .bell_style(rustyline::config::BellStyle::None)
+            .build(),
+    ) {
+        Ok(editor) => editor,
+        Err(err) => {
+            eprint!("\nFailed to create rustyline editor: {}  in main", err);
+            return ExitCode::from(FAILED_TO_START_CLI);
+        }
+    };
 
     rl.set_max_history_size(MAX_CLI_HISTORY_SIZE)
         .unwrap_or_else(|err| {
@@ -66,8 +72,6 @@ fn main() {
         });
     rl.set_auto_add_history(true);
     let external_printer = rl.create_external_printer().unwrap();
-
-   
 
     let (error_tx, error_rx) = mpsc::channel();
     let (crach_tx, crach_rx) = mpsc::channel::<String>();
@@ -85,37 +89,56 @@ fn main() {
         printer.print(settings_path, RGB::DEBUG());
     }
 
-
     printer.print("CLI Plugin Manager", RGB::CYAN());
 
-    let open_threads = Mutex::new( match Manager::new(printer.clone(), settings_path, crach_tx) {
-        Ok(threads) => threads,
+    let open_threads = Mutex::new(
+        match Manager::new(printer.clone(), settings_path, crach_tx) {
+            Ok(threads) => threads,
+            Err(err) => {
+                printer.print_error(
+                    "main",
+                    &format!("Failed to start threadmaniger: {}", err),
+                    RGB::ERROR(),
+                );
+                return ExitCode::from(FAILED_TO_START_THREADMANIGER);
+            }
+        },
+    );
+    rl.set_helper(Some(cli::MyCompleter::new(&open_threads)));
+
+    match open_threads.lock() {
+        Ok(mut threads) => threads.start_error(error_rx),
         Err(err) => {
             printer.print_error(
                 "main",
-                &format!("Failed to start threadmaniger: {}", err),
+                &format!("Failed to lock open threads: {}", err),
                 RGB::ERROR(),
             );
-            exit(FAILED_TO_START_THREADMANIGER);
+            return ExitCode::from(FAILED_TO_LOCK_OPEN_THREADS);
         }
-    });
-    rl.set_helper(Some(cli::MyCompleter::new(&open_threads)));
-
-    open_threads.lock().unwrap_or_else(|err| {
-            printer.print_error("main", &format!("Failed to lock open threads: {}", err), RGB::ERROR());
-            exit(FAILED_TO_LOCK_OPEN_THREADS);
-    }).start_error(error_rx);
-    
-
+    }
 
     let cli = cli::initialise_cli();
 
+    let x = thread::spawn(||{
+        sleep(Duration::from_secs(10));
+        Printer::close_program();
+    });
+
     loop {
         {
-            let mut thread_data= open_threads.lock().unwrap_or_else(|err| {
-                printer.print_error("main", &format!("Failed to lock open threads: {}", err), RGB::ERROR());
-                exit(FAILED_TO_LOCK_OPEN_THREADS);
-            });
+            let mut thread_data = match open_threads.lock() {
+                Ok(data) => data,
+                Err(err) => {
+                    printer.print_error(
+                        "main",
+                        &format!("Failed to lock open threads: {}", err),
+                        RGB::ERROR(),
+                    );
+                    return ExitCode::from(FAILED_TO_LOCK_OPEN_THREADS);
+                }
+            };
+
             crach_rx.try_iter().for_each(|msg| {
                 let _ = thread_data.stop_thread(msg);
             });
@@ -128,16 +151,26 @@ fn main() {
                 let mut args = input.split_whitespace();
                 let command = args.next().unwrap_or_default();
 
-
                 if command == "exit" {
                     break;
                 }
                 if let Some(func) = cli.get(command) {
-                    let mut thread_data = open_threads.lock().unwrap_or_else(|err| {
-                        printer.print_error("main", &format!("Failed to lock open threads: {}", err), RGB::ERROR());
-                        exit(FAILED_TO_LOCK_OPEN_THREADS);
-                    });
-                    func(args.collect::<Vec<&str>>().as_slice(), &mut *thread_data, &printer);
+                    let mut thread_data = match open_threads.lock() {
+                        Ok(data) => data,
+                        Err(err) => {
+                            printer.print_error(
+                                "main",
+                                &format!("Failed to lock open threads: {}", err),
+                                RGB::ERROR(),
+                            );
+                            return ExitCode::from(FAILED_TO_LOCK_OPEN_THREADS);
+                        }
+                    };
+                    func(
+                        args.collect::<Vec<&str>>().as_slice(),
+                        &mut *thread_data,
+                        &printer,
+                    );
                 } else {
                     printer.print(
                         "Command not found. Type 'help' for a list of commands.",
@@ -159,11 +192,17 @@ fn main() {
             }
         }
     }
+println!("Exiting...");
+    x.join().unwrap();
     drop(open_threads);
+    ExitCode::SUCCESS
 }
-
 
 //TODO replace exit with memory safe exit
 //TODO test bz plugin
 //TODO set up exe or raspbery
 //TODO test led pwm on raspberry
+
+//TODO windows color support
+
+//TODO test exiting with ctrl+c on unix

@@ -103,6 +103,21 @@ impl Printer {
         Self { printer: print_tx, sender }
     }
 
+    /// Sends a ^C signal to the program, which can be iterpreted as what the use whants
+    pub fn close_program(){
+        #[cfg(unix)]
+        unsafe {
+            libc::raise(libc::SIGINT);
+        }
+
+        #[cfg(windows)]
+        {
+            use winapi::um::wincon::GenerateConsoleCtrlEvent;
+            unsafe {
+                GenerateConsoleCtrlEvent(winapi::um::wincon::CTRL_C_EVENT, 0);
+            }
+        }
+    }
 pub fn reset_color() {
     let config = match VARIABLES.lock() {
         Ok(c) => c,
