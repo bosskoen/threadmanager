@@ -1,7 +1,5 @@
 use std::{
-    env,
-    process::ExitCode,
-    sync::{mpsc, Mutex}, thread::{self, sleep, Thread}, time::Duration,
+    env, io::ErrorKind, process::ExitCode, sync::{mpsc, Mutex}, thread::{self, sleep, Thread}, time::Duration
 };
 
 mod atexit;
@@ -71,7 +69,7 @@ fn main() -> ExitCode {
             eprint!("\nFailed to set max history size: {}  in main", err);
         });
     rl.set_auto_add_history(true);
-    let external_printer = rl.create_external_printer().unwrap();
+    let external_printer = rl.create_external_printer().unwrap(); //TODO
 
     let (error_tx, error_rx) = mpsc::channel();
     let (crach_tx, crach_rx) = mpsc::channel::<String>();
@@ -120,7 +118,7 @@ fn main() -> ExitCode {
 
     let cli = cli::initialise_cli();
 
-    let x = thread::spawn(||{
+    let x = thread::spawn(|| {
         sleep(Duration::from_secs(10));
         Printer::close_program();
     });
@@ -152,6 +150,12 @@ fn main() -> ExitCode {
                 let command = args.next().unwrap_or_default();
 
                 if command == "exit" {
+                    #[cfg(windows)]
+                    {
+                        if Printer::is_forced_shutdown(){
+                            printer.print("Forced shutdown initiated from other thread, exiting.\n", RGB::ERROR());
+                        }
+                    }
                     break;
                 }
                 if let Some(func) = cli.get(command) {
@@ -179,7 +183,19 @@ fn main() -> ExitCode {
                 }
             }
             Err(ReadlineError::Interrupted) => {
-                printer.print("CTRL-C pressed, exiting.\n", RGB::WHITE());
+                #[cfg(unix)]
+                {
+                    if Printer::is_forced_shutdown(){
+                        printer.print("Forced shutdown initiated from other thread, exiting.\n", RGB::ERROR());
+                    } else{
+                        printer.print("CTRL-C pressed, exiting.\n", RGB::WHITE());
+                    }
+                }
+                #[cfg(windows)]
+                {
+                    printer.print("CTRL-C pressed, exiting.\n", RGB::WHITE());
+                }
+                
                 break;
             }
             Err(ReadlineError::Eof) => {
@@ -192,9 +208,11 @@ fn main() -> ExitCode {
             }
         }
     }
-println!("Exiting...");
+    println!("Exiting...");
     x.join().unwrap();
+
     drop(open_threads);
+    sleep(Duration::from_millis(500)); // Give threads time to finish
     ExitCode::SUCCESS
 }
 
@@ -206,3 +224,9 @@ println!("Exiting...");
 //TODO windows color support
 
 //TODO test exiting with ctrl+c on unix
+
+// linux ^c will cash and exit safoly windows does not
+
+
+// SendInput / WriteConsoleInput
+

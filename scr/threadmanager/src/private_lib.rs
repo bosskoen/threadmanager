@@ -38,6 +38,7 @@ impl Drop for Manager {
         self.stop_all_threads();
         self.printer.print("Stopping error thread", RGB::NOTICE());
         self.stop_error();
+        self.printer.print("all threads stopped", RGB::NOTICE());
         Printer::reset_color();
     }
 }
