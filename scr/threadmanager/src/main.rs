@@ -118,11 +118,6 @@ fn main() -> ExitCode {
 
     let cli = cli::initialise_cli();
 
-    let x = thread::spawn(|| {
-        sleep(Duration::from_secs(10));
-        Printer::close_program();
-    });
-
     loop {
         {
             let mut thread_data = match open_threads.lock() {
@@ -208,25 +203,14 @@ fn main() -> ExitCode {
             }
         }
     }
-    println!("Exiting...");
-    x.join().unwrap();
-
     drop(open_threads);
-    sleep(Duration::from_millis(500)); // Give threads time to finish
     ExitCode::SUCCESS
 }
 
-//TODO replace exit with memory safe exit
 //TODO test bz plugin
 //TODO set up exe or raspbery
 //TODO test led pwm on raspberry
 
-//TODO windows color support
+//TODO windows color support ( qof , cargo handles it )
 
-//TODO test exiting with ctrl+c on unix
-
-// linux ^c will cash and exit safoly windows does not
-
-
-// SendInput / WriteConsoleInput
 
