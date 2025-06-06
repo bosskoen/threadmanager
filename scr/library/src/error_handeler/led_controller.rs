@@ -42,7 +42,12 @@ pub mod led {
     
     /// LED controller for the PCA9685 chip.
     /// This struct handles the I2C communication with the PCA9685 chip and controls the colors and brightness of 5 LEDs.
-    ///TODO waht pin is used for of and what pin is used for what color
+    /// the fist pin on the PCA9685 is for the red color, the second for the green color and the third for the blue color, that repeats for all 5 leds.
+    /// the PCA9685 self is connected to the rasbarypi is this way:
+    /// pin 1 for power
+    /// pin 6 or 9 for ground
+    /// pin 3 for SDA and pin 5 for SCL
+    /// pin 7 for the OF pin, this pin is used to turn the PCA9685 on and off
     pub struct LedController {
         pin: Option<rppal::gpio::OutputPin>,
         control: Option<rppal::i2c::I2c>,

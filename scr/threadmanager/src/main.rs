@@ -1,5 +1,7 @@
 use std::{
-    env, io::ErrorKind, process::ExitCode, sync::{mpsc, Mutex}, thread::{self, sleep, Thread}, time::Duration
+    env,
+    process::ExitCode,
+    sync::{mpsc, Mutex},
 };
 
 mod atexit;
@@ -46,7 +48,13 @@ fn main() -> ExitCode {
         }
         #[cfg(not(debug_assertions))]
         {
-            settings_path = ""; //TODO fille structere uit zoeken
+            #[cfg(windows)]
+            {
+                settings_path = r".\settings\genaral_setting.toml";
+            }#[cfg(unix)]
+            {
+                settings_path = r"./settings/genaral_setting.toml";
+            } //TODO fille structere uit zoeken
         }
     } else {
         settings_path = &arg[1];
@@ -69,7 +77,7 @@ fn main() -> ExitCode {
             eprint!("\nFailed to set max history size: {}  in main", err);
         });
     rl.set_auto_add_history(true);
-    let external_printer = rl.create_external_printer().unwrap(); //TODO
+    let external_printer = rl.create_external_printer().expect("coudn't get a printer working");
 
     let (error_tx, error_rx) = mpsc::channel();
     let (crach_tx, crach_rx) = mpsc::channel::<String>();
@@ -147,8 +155,11 @@ fn main() -> ExitCode {
                 if command == "exit" {
                     #[cfg(windows)]
                     {
-                        if Printer::is_forced_shutdown(){
-                            printer.print("Forced shutdown initiated from other thread, exiting.\n", RGB::ERROR());
+                        if Printer::is_forced_shutdown() {
+                            printer.print(
+                                "Forced shutdown initiated from other thread, exiting.\n",
+                                RGB::ERROR(),
+                            );
                         }
                     }
                     break;
@@ -180,9 +191,12 @@ fn main() -> ExitCode {
             Err(ReadlineError::Interrupted) => {
                 #[cfg(unix)]
                 {
-                    if Printer::is_forced_shutdown(){
-                        printer.print("Forced shutdown initiated from other thread, exiting.\n", RGB::ERROR());
-                    } else{
+                    if Printer::is_forced_shutdown() {
+                        printer.print(
+                            "Forced shutdown initiated from other thread, exiting.\n",
+                            RGB::ERROR(),
+                        );
+                    } else {
                         printer.print("CTRL-C pressed, exiting.\n", RGB::WHITE());
                     }
                 }
@@ -190,7 +204,7 @@ fn main() -> ExitCode {
                 {
                     printer.print("CTRL-C pressed, exiting.\n", RGB::WHITE());
                 }
-                
+
                 break;
             }
             Err(ReadlineError::Eof) => {
@@ -212,5 +226,3 @@ fn main() -> ExitCode {
 //TODO test led pwm on raspberry
 
 //TODO windows color support ( qof , cargo handles it )
-
-
