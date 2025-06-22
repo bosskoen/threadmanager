@@ -178,7 +178,7 @@ pub fn error_catchloop(receiver: Receiver<ErrorOperation>, mut printer: Printer,
             led_controller::led::LedController::new([RGB::GREEN(), RGB::BLACK(), RGB::BLACK(), RGB::BLACK(), RGB::BLACK()], [LED_NIGHT_BRIGHTNESS; 5])
         } else {
             led_controller::led::LedController::new([RGB::GREEN(), RGB::BLACK(), RGB::BLACK(), RGB::BLACK(), RGB::BLACK()], [LED_DAY_BRIGHTNESS; 5])
-        }
+        } // TODO what color do i need 
     }.unwrap_or_else(|err| {
         printer.print_error("errorThread",&format!("couldn't initialize led controler: \n {}", err), RGB::CRITICAL_ERROR());
         led_controller::led::LedController::dummy()

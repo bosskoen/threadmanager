@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fs, time::SystemTime};
+use std::{collections::HashMap, fs};
 
 use library::toml;
 use serde::Deserialize;
@@ -17,15 +17,14 @@ pub struct Settings {
 }
 
 impl Settings {
-    pub fn get(file_name: &String) -> Result<(Self, SystemTime), PricingError> {
+    pub fn get(file_name: &String) -> Result<Self, PricingError> {
         let settings = fs::read_to_string(file_name).map_err(|_| PricingError::FileReadError)?;
-        let last_write = fs::metadata(file_name).map_err(|_| PricingError::FileReadError)?.modified().map_err(|_| PricingError::FileReadError)?;
 
         let config = toml::from_str::<Settings>(&settings).map_err(|_| PricingError::TOMLReadError)?;
         if config.name != super::APP_NAME {
             return Err(PricingError::TOMLReadError);
         }
-        Ok((config, last_write))
+        Ok(config)
     }
 }
 

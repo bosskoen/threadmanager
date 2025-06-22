@@ -264,7 +264,7 @@ fn led(args: &[&str], _open_threads: &mut Manager, printer: &Printer) {
             "led on [red/green/blue/all] [0-4/all]\n\
         led off [red/green/blue/all] [0-4/all]\n\
         led reset [red/green/blue/all] [0-4/all]\n\
-        led color <hex color (0xRRGGBB)> [0-4/all]\n\
+        led color <hex (0xRRGGBB)||normal> [0-4/all]\n\
         led brightness <0-16> [0-4/all]",
             RGB::WHITE(),
         );
@@ -400,11 +400,13 @@ fn led(args: &[&str], _open_threads: &mut Manager, printer: &Printer) {
                     "4" => led_num = LedNumber::LED5,
                     "all" => led_num = LedNumber::ALL,
                     _ => {
-                        printer.print("Invalid argument. please specify a color and LED\nled off (0xrrggbb|| 0XRRGGBB)[1-4/all]", RGB::WHITE());
+                        printer.print("Invalid argument. please specify a color and LED\nled off (0xrrggbb|| 0XRRGGBB)||normal [1-4/all]", RGB::WHITE());
                         return;
                     }
                 }
-                if args[1].len() == 8 && args[1].to_lowercase().starts_with("0x") {
+                if args[1] == "normal" {
+                    color = RGB::GREEN(); //TODO what color should be used here?
+                } else if args[1].len() == 8 && args[1].to_lowercase().starts_with("0x") {
                     let trimde = &args[1][2..];
                     color = RGB::from_hex(u32::from_str_radix(trimde, 16).unwrap_or(0));
                 } else {
@@ -469,7 +471,7 @@ fn led(args: &[&str], _open_threads: &mut Manager, printer: &Printer) {
             printer.print("LED Command Help:\n", RGB::NOTICE());
             printer.print(
                 "led on/off/reset [red/green/blue/all] [0-4/all] - Control specific colors\n\
-                   led color <hex color (0xRRGGBB)> [0-4/all] - Set LED color\n\
+                   led color <hex (0xRRGGBB)||noraml> [0-4/all] - Set LED color or sets it to the no problems color\n\
                    led brightness <0-16> [0-4/all] - Set brightness level",
                 RGB::WHITE(),
             );
@@ -516,15 +518,19 @@ impl<'a> rustyline::completion::Completer for MyCompleter<'a> {
         _cont: &library::rustyline::Context<'_>,
     ) -> rustyline::Result<(usize, Vec<Self::Candidate>)> {
         #[cfg(feature = "led")]
-        const COMMANDS: &[&str] = &["start", "stop", "status", "list", "help", "settings", "led", "exit"];
+        const COMMANDS: &[&str] = &[
+            "start", "stop", "status", "list", "help", "settings", "led", "exit",
+        ];
         #[cfg(not(feature = "led"))]
-        const COMMANDS: &[&str] = &["start", "stop", "status", "list", "help", "settings", "exit"];
+        const COMMANDS: &[&str] = &[
+            "start", "stop", "status", "list", "help", "settings", "exit",
+        ];
 
-         #[cfg(feature = "led")]
+        #[cfg(feature = "led")]
         const LED_SUBS: &[&str] = &["on", "off", "reset", "color", "brightness"];
-         #[cfg(feature = "led")]
+        #[cfg(feature = "led")]
         const LED_COLORS: &[&str] = &["red", "green", "blue", "all"];
-         #[cfg(feature = "led")]
+        #[cfg(feature = "led")]
         const LED_INDICES: &[&str] = &["0", "1", "2", "3", "4", "all"];
 
         const LIST_ARGS: &[&str] = &["running", "stopped", "all"];
@@ -600,7 +606,7 @@ impl<'a> rustyline::completion::Completer for MyCompleter<'a> {
                                     completions.extend(LED_COLORS.iter().map(|s| s.to_string()));
                                 } else {
                                     completions.extend(
-                                        LED_SUBS
+                                        LED_COLORS
                                             .iter()
                                             .filter(|s| s.starts_with(subcmd))
                                             .map(|s| s.to_string()),
@@ -609,15 +615,21 @@ impl<'a> rustyline::completion::Completer for MyCompleter<'a> {
                             }
                             "color" => {
                                 if end_with_space {
-                                    // After `led color ` — wait for hex input
-                                    // Optional: Add a placeholder like "0xRRGGBB"
+                                    // After "led color ", suggest "normal" and hex format hint
+                                    completions.push("normal".to_string());
+                                    completions.push("0xrrbbgg".to_string()); // Optional placeholder suggestion
                                 } else {
-                                    completions.extend(
-                                        LED_SUBS
-                                            .iter()
-                                            .filter(|s| s.starts_with(subcmd))
-                                            .map(|s| s.to_string()),
-                                    );
+                                    // Partial input for the color value (e.g., "n" or "0x")
+                                    if "normal".starts_with(current_word) {
+                                        completions.push("normal".to_string());
+                                    }
+                                    if "0xrrbbgg"
+                                        .to_lowercase()
+                                        .starts_with(&current_word.to_lowercase())
+                                    {
+                                        completions.push("0xrrbbgg".to_string());
+                                        // Optional guidance-style suggestion
+                                    }
                                 }
                             }
                             "brightness" => {
@@ -625,8 +637,7 @@ impl<'a> rustyline::completion::Completer for MyCompleter<'a> {
                                     completions.extend((0..=16).map(|n| n.to_string()));
                                 } else {
                                     completions.extend(
-                                        LED_SUBS
-                                            .iter()
+                                        (0..=16).map(|n| n.to_string())
                                             .filter(|s| s.starts_with(subcmd))
                                             .map(|s| s.to_string()),
                                     );
@@ -758,4 +769,3 @@ impl<'a> rustyline::completion::Completer for MyCompleter<'a> {
 }
 
 //TODO cleanup mach statmenst (not urgent)
-

@@ -51,7 +51,8 @@ fn main() -> ExitCode {
             #[cfg(windows)]
             {
                 settings_path = r".\settings\genaral_setting.toml";
-            }#[cfg(unix)]
+            }
+            #[cfg(unix)]
             {
                 settings_path = r"./settings/genaral_setting.toml";
             } //TODO fille structere uit zoeken
@@ -77,7 +78,9 @@ fn main() -> ExitCode {
             eprint!("\nFailed to set max history size: {}  in main", err);
         });
     rl.set_auto_add_history(true);
-    let external_printer = rl.create_external_printer().expect("coudn't get a printer working");
+    let external_printer = rl
+        .create_external_printer()
+        .expect("coudn't get a printer working");
 
     let (error_tx, error_rx) = mpsc::channel();
     let (crach_tx, crach_rx) = mpsc::channel::<String>();
@@ -127,24 +130,6 @@ fn main() -> ExitCode {
     let cli = cli::initialise_cli();
 
     loop {
-        {
-            let mut thread_data = match open_threads.lock() {
-                Ok(data) => data,
-                Err(err) => {
-                    printer.print_error(
-                        "main",
-                        &format!("Failed to lock open threads: {}", err),
-                        RGB::ERROR(),
-                    );
-                    return ExitCode::from(FAILED_TO_LOCK_OPEN_THREADS);
-                }
-            };
-
-            crach_rx.try_iter().for_each(|msg| {
-                let _ = thread_data.stop_thread(msg);
-            });
-        }
-
         match rl.readline("> ") {
             Ok(line) => {
                 let input = line.trim();
@@ -176,6 +161,11 @@ fn main() -> ExitCode {
                             return ExitCode::from(FAILED_TO_LOCK_OPEN_THREADS);
                         }
                     };
+
+                    crach_rx.try_iter().for_each(|msg| {
+                        let _ = thread_data.stop_thread(msg);
+                    });
+
                     func(
                         args.collect::<Vec<&str>>().as_slice(),
                         &mut *thread_data,
@@ -223,6 +213,8 @@ fn main() -> ExitCode {
 
 //TODO test bz plugin
 //TODO set up exe or raspbery
+//TODO let color
 //TODO test led pwm on raspberry
+//TODO led nornal mode auto complete
 
 //TODO windows color support ( qof , cargo handles it )

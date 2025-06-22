@@ -23,6 +23,7 @@ impl RGB {
     /// # Example
     ///
     /// ```
+    /// use library::error_handeler::RGB;
     /// let color = RGB::new(255, 0, 0); // Red
     /// ```
     pub const fn new(r: u8, g: u8, b: u8) -> Self {
@@ -38,6 +39,7 @@ impl RGB {
     /// # Example
     ///
     /// ```
+    /// use library::error_handeler::RGB;
     /// let color = RGB::from_hex(0xFF0000); // Red
     /// ```
     pub const fn from_hex(hex: u32) -> Self {
@@ -49,6 +51,7 @@ impl RGB {
     /// # Example
     ///
     /// ```
+    /// use library::error_handeler::RGB;
     /// let color = RGB::new(255, 0, 0);
     /// assert_eq!(color.to_hex(), "#FF0000");
     /// ```
@@ -61,6 +64,7 @@ impl RGB {
     /// # Example
     ///
     /// ```
+    /// use library::error_handeler::RGB;
     /// let color = RGB::new(255, 0, 0);
     /// assert_eq!(color.to_tuple(), (255, 0, 0));
     /// ```

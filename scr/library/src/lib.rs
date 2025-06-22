@@ -2,6 +2,8 @@ pub mod error_handeler;
 pub mod data_base_manager;
 pub mod web_service_adapter;
 
+#[cfg(unix)]
+pub use libc;
 
 use std::any::Any;
 

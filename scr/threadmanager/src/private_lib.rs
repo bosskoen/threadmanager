@@ -5,15 +5,11 @@ use library::{
 };
 use serde::Deserialize;
 use std::{
-    collections::HashMap,
-    error::Error,
-    fmt, fs, panic,
-    sync::{
+    collections::HashMap, error::Error, fmt, fs, panic, sync::{
         atomic::AtomicBool,
         mpsc::{Receiver, Sender},
         Arc, Mutex,
-    },
-    thread::{self, JoinHandle},
+    }, thread::{self, JoinHandle}
 };
 
 pub struct IniStatus {}
@@ -116,7 +112,7 @@ impl Manager {
                 Err(ManagerError::AppDoesntExist(name))
             }
         }
-    } //TOOD stop error thread is een loop
+    }
 
     pub fn is_running(&self, name: &str) -> bool {
         self.map.contains_key(name)
@@ -603,6 +599,8 @@ fn thread_logic(
                 );
             }
         }
+        drop(start);
+        drop(lib); //TODO doesnt unload
     }
 }
 

@@ -245,7 +245,7 @@ impl Printer {
         if let Err(e) = self.sender.send(operation) {
             self.print_error(
                 plugin,
-                &format!("Failed to send operation: {e}"),
+                &format!("Failed to send operation to error Thread: {e}"),
                 RGB::CRITICAL_ERROR(),
             );
             return Err(());
