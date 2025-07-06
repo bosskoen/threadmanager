@@ -6,18 +6,18 @@ use std::{
 
 use humansize::{format_size, BINARY};
 use library::{
-    data_base_manager::{rusqlite, Connection, DataBaseError},
+    data_base_manager::{get_colum_value, sqlx, DataBaseError, SyncConnection},
     format_duration, impl_status, DateTime, Local, Status,
 };
 
-use crate::parsing::Settings;
+use crate::parsing::{DataBaseLogin, Settings};
 
 pub struct Context {
     pub stopflag: Arc<AtomicBool>,
     status: Arc<Mutex<Box<dyn Status>>>,
     settings_path: String,
 
-    pub conn: Connection,
+    pub conn: SyncConnection,
     pub data_table_name: String,
     pub lookup_table_name: String,
     pub url: String,
@@ -37,14 +37,14 @@ impl Context {
         settings_path: String,
     ) -> Result<Self, PricingError> {
         let settings = Settings::get(&settings_path)?;
-        let data_base_path = settings.data_base_path;
         let data_table_name = settings.table_name;
         let lookup_table_name = settings.lookup_table_name;
 
-        let mut conn = Connection::open(data_base_path.clone())
-            .map_err(|err| PricingError::DataBaseConnectionError(err))?;
-        conn.pragma_update(None, "journal_mode", &"TRUNCATE")?;
-        crate::validate_data_base(&mut conn, &data_table_name, &lookup_table_name)?;
+        let userdatabase = DataBaseLogin::get(&settings.user_login_path)?;
+
+        let conn = SyncConnection::new(&userdatabase.user_name, &userdatabase.password, &userdatabase.host, &userdatabase.database_name)
+            .map_err(|err| PricingError::DataBaseError(err.to_string()))?;
+        crate::validate_data_base(DataBaseLogin::get(&settings.owner_login_path)?, &data_table_name, &lookup_table_name)?;
         initialise_status(&conn, &data_table_name, &status)?;
 
         Ok(Context {
@@ -99,22 +99,22 @@ impl Context {
 }
 
 fn initialise_status(
-    conn: &Connection,
+    conn: &SyncConnection,
     table_name: &str,
     status: &Arc<Mutex<Box<dyn Status>>>,
 ) -> Result<(), PricingError> {
     let mut newstatus = PricingStatus::new();
-    if let Ok(timestamp) = conn.query_row_and_then(
-        &format!("SELECT max(time) FROM {}", table_name),
-        [],
-        |row| row.get::<_, i64>(0),
-    ) {
+    let (pool, tokio) = conn.get_inner();
+
+    if let Ok(timestamp) = tokio.block_on(sqlx::query(&format!("SELECT max(time) FROM {}", table_name)).fetch_one(&pool))
+    {
+        let timestamp = get_colum_value::<i64>(&timestamp, "time").map_err(|e| PricingError::DataBaseError(e.to_string()))?;
         newstatus.last_update_time =
             if let Some(local_time) = DateTime::from_timestamp(timestamp, 0) {
                 DateTime::from(local_time)
             } else {
                 newstatus.last_update_time
-            }
+            };
     }
 
     if let Ok(mut status) = status.lock() {
@@ -127,7 +127,7 @@ fn initialise_status(
 
 #[derive(Debug)]
 pub enum PricingError {
-    DataBaseConnectionError(rusqlite::Error),
+    DataBaseError(String),
     StatusIntialiseError,
     IncorectStatusType,
     LockFailedError,
@@ -144,7 +144,7 @@ pub enum PricingError {
 impl Display for PricingError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            PricingError::DataBaseConnectionError(err) => write!(f, "DATA_BASE_CONNECTION_ERROR: Couldn't get a connection to the given data base.\n{err}\n"),
+            PricingError::DataBaseError(err) => write!(f, "DATA_BASE_ERROR: Couldn't get communicate to the given data base.\n{err}\n"),
             PricingError::StatusIntialiseError => write!(f, "STATUS_INTIALISE_ERROR: Couldn't get a lock on status while initialising."),
             PricingError::IncorectStatusType => write!(f, "INCORECT_STATUS_TYPE: Status wasn't of the corect type."),
             PricingError::LockFailedError => write!(f, "LOCK_FAILED_ERROR: Couldn't get a lock on status while updating."),
@@ -165,11 +165,7 @@ impl From<DataBaseError> for PricingError {
         PricingError::SQLReadWrite(format!("{:?}", value))
     }
 }
-impl From<rusqlite::Error> for PricingError {
-    fn from(value: rusqlite::Error) -> Self {
-        PricingError::SQLformatError(format!("{:?}", value))
-    }
-}
+
 impl std::error::Error for PricingError {}
 
 struct PricingStatus {

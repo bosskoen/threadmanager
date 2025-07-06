@@ -1,9 +1,8 @@
 use data_base_manager::{
-    rusqlite::{self, ToSql},
-    ColumnDefinition, Connection, DataBaseError, SQLReadable, SQLformat,
+    ColumnDefinition, DataBaseError, SQLReadable, SQLformat,
 };
 use error_handeler::{ErrorOperation, RGB};
-use library::{error_handeler::Printer, *};
+use library::{data_base_manager::{get_colum_value, PgRow, PostgresType, SyncConnection, ToSql}, error_handeler::Printer, *};
 use parsing::BzData;
 use std::{sync::{
         atomic::{AtomicBool, Ordering},
@@ -11,6 +10,7 @@ use std::{sync::{
     }, thread, time::{Duration, Instant}
 };
 use type_dependecies::{Context, PricingError};
+use parsing::DataBaseLogin;
 
 mod parsing;
 mod type_dependecies;
@@ -25,8 +25,6 @@ pub fn start(
     status: Arc<Mutex<Box<dyn Status>>>,
     settings_path: String,
 ) -> Result<(), Box<dyn std::error::Error>> {
-
-    //let file = std::fs::File::create("text.txt");
 
     let mut context = Context::from(stopflag, status, settings_path)?;
     printer.send(ErrorOperation::ChangeLed(RGB::BLUE(), false, error_handeler::LedNumber::LED2), APP_NAME).map_err(|_| {
@@ -117,10 +115,19 @@ loop {
 }
 
 fn validate_data_base(
-    conn: &mut Connection,
+    login: DataBaseLogin,
     table_name: &str,
     lookup_table_name: &str,
 ) -> Result<(), PricingError> {
+    use PostgresType as PT;
+
+    let mut owned_conn = SyncConnection::new(
+        &login.user_name,
+        &login.password,
+        &login.host,
+        &login.database_name,
+    )?; //TODO
+
     //CREATE TABLE [name](
     //ID INT NOT NULL,
     //timeStamp INT NOT NULL,
@@ -133,16 +140,16 @@ fn validate_data_base(
     //PRIMARY KEY (ID , TimeStamp)
     //);
     let collums = vec![
-        define_column!("ID", "INT", true, true),
-        define_column!("timeStamp", "INT", true, true),
-        define_column!("sellPrice", "REAL", true, false),
-        define_column!("buyPrice", "REAL", true, false),
-        define_column!("sellVolume", "INT", true, false),
-        define_column!("sellMovingWeek", "INT", true, false),
-        define_column!("buyVolume", "INT", true, false),
-        define_column!("buyMovingWeek", "INT", true, false),
+        define_column!("ID", PT::i16, true, true),
+        define_column!("timeStamp", PT::i64, true, true),
+        define_column!("sellPrice", PT::f64, true, false),
+        define_column!("buyPrice", PT::f64, true, false),
+        define_column!("sellVolume", PT::i32, true, false),
+        define_column!("sellMovingWeek", PT::i64, true, false),
+        define_column!("buyVolume", PT::i32, true, false),
+        define_column!("buyMovingWeek", PT::i64, true, false),
     ];
-    data_base_manager::ensure_table_format(conn, table_name, collums)?;
+    owned_conn.ensure_table_format(table_name, collums)?;
 
     //CREATE TABLE [name](
     //    HypixelID TEXT NOT NULL UNIQUE,
@@ -150,12 +157,12 @@ fn validate_data_base(
     //    Name TEXT
     //);
 
-    check_and_create_lookup_table(conn, lookup_table_name)?;
+   // check_and_create_lookup_table(owned_conn, lookup_table_name)?;
 
     Ok(())
 }
 
-fn check_and_create_lookup_table(conn: &Connection, table_name: &str) -> Result<(), PricingError> {
+/*fn check_and_create_lookup_table(conn: SyncConnection, table_name: &str) -> Result<(), PricingError> {
     // Step 1: Ensure the table exists
     create_table_if_not_exists(conn, table_name)?;
 
@@ -170,7 +177,7 @@ fn check_and_create_lookup_table(conn: &Connection, table_name: &str) -> Result<
     Ok(())
 }
 
-fn create_table_if_not_exists(conn: &Connection, table_name: &str) -> Result<(), PricingError> {
+fn create_table_if_not_exists(conn: SyncConnection, table_name: &str) -> Result<(), PricingError> {
     conn.execute(
         &format!(
             "CREATE TABLE IF NOT EXISTS {}(
@@ -299,7 +306,7 @@ fn ensure_column_exists(
     )?;
 
     Ok(())
-}
+}*/
 
 fn get_data_from_api(
     printer: &mut Printer,
@@ -395,9 +402,9 @@ fn update_index_database(
     struct Name {
         name: String,
     }
-    impl SQLformat for Name {
-        fn sqlformat(&self) -> Vec<&dyn ToSql> {
-            vec![&self.name]
+    impl SQLformat<'_> for Name {
+        fn sqlformat(&self) -> Vec<ToSql> {
+            vec![ToSql::Text(&self.name)]
         }
     }
     let hypixel_ids = json_data
@@ -408,8 +415,7 @@ fn update_index_database(
         })
         .collect();
 
-    if data_base_manager::try_write_database(
-        &mut context.conn,
+    if context.conn.try_write_database(
         hypixel_ids,
         &context.lookup_table_name,
         "HypixelID",
@@ -440,48 +446,47 @@ fn write_database(
     printer: &mut Printer,
 ) -> Result<(bool, String), PricingError> {
     struct BazaData {
-        id: usize,
-        time_stamp: u64,
+        id: i16,
+        time_stamp: i64,
         sell_price: f64,
         buy_price: f64,
-        sell_volme: usize,
-        sell_moving_week: usize,
-        buy_volme: usize,
-        buy_moving_week: usize,
+        sell_volme: i32,
+        sell_moving_week: i64,
+        buy_volme: i32,
+        buy_moving_week: i64,
     }
-    impl SQLformat for BazaData {
-        fn sqlformat(&self) -> Vec<&dyn ToSql> {
+    impl SQLformat<'_> for BazaData {
+        fn sqlformat(&self) -> Vec<ToSql> {
             vec![
-                &self.id,
-                &self.time_stamp,
-                &self.sell_price,
-                &self.buy_price,
-                &self.sell_volme,
-                &self.sell_moving_week,
-                &self.buy_volme,
-                &self.buy_moving_week,
+                ToSql::i16(self.id ),
+                ToSql::i64(self.time_stamp ),
+                ToSql::f64(self.sell_price),
+                ToSql::f64(self.buy_price),
+                ToSql::i32(self.sell_volme ),
+                ToSql::i64(self.sell_moving_week),
+                ToSql::i32(self.buy_volme ),
+                ToSql::i64(self.buy_moving_week),
             ]
         }
     }
     struct Id {
-        id: usize,
+        id: i16,
     }
     impl SQLReadable for Id {
-        fn from_row(row: &rusqlite::Row) -> Result<Self, DataBaseError> {
-            let id = row.get(0)?;
+        fn from_row(row: &PgRow) -> Result<Self, DataBaseError> {
+            let id = get_colum_value::<i16>(&row, "ID")?;
             Ok(Id { id })
         }
     }
 
     let mut error_send_failed = false;
     let mut error_message: Vec<String> = Vec::new();
-    let time = json_data.last_updated;
+    let time = json_data.last_updated as i64;
     let prices_data = json_data
         .products
         .into_values()
         .filter_map(|value| {
-            match data_base_manager::read_database::<Id>(
-                &mut context.conn,
+            match context.conn.read_database::<Id>(
                 &context.lookup_table_name,
                 "ID",
                 &format!("WHERE HypixelID = '{}'", value.product_id),
@@ -522,8 +527,7 @@ fn write_database(
         })
         .collect();
 
-    data_base_manager::write_database(
-        &mut context.conn,
+    context.conn.write_database(
         prices_data,
         &context.data_table_name,
         "ID, timeStamp, sellPrice, buyPrice, sellVolume, sellMovingWeek, buyVolume, buyMovingWeek",

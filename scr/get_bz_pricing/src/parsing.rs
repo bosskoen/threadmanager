@@ -8,12 +8,17 @@ use crate::PricingError;
 #[derive(Deserialize)]
 pub struct Settings {
     name: String,
+
     pub step_rate: usize,
     pub update_rate: usize,
+
     pub table_name: String,
-    pub data_base_path: String,
-    pub url: String,
     pub lookup_table_name: String,
+
+    pub user_login_path: String,
+    pub owner_login_path: String,
+
+    pub url: String,
 }
 
 impl Settings {
@@ -24,6 +29,23 @@ impl Settings {
         if config.name != super::APP_NAME {
             return Err(PricingError::TOMLReadError);
         }
+        Ok(config)
+    }
+}
+
+#[derive(Deserialize)]
+pub struct DataBaseLogin {
+    pub user_name: String,
+    pub password: String,
+    pub host: String,
+    pub database_name: String,
+}
+
+impl DataBaseLogin {
+    pub fn get(file_name: &String) -> Result<Self, PricingError> {
+        let settings = fs::read_to_string(file_name).map_err(|_| PricingError::FileReadError)?;
+
+        let config = toml::from_str::<DataBaseLogin>(&settings).map_err(|_| PricingError::TOMLReadError)?;
         Ok(config)
     }
 }
@@ -54,10 +76,10 @@ pub struct Product {
 pub struct QuickStatus {
     pub sellPrice: f64,
     pub buyPrice: f64,
-    pub sellVolume: usize,
-    pub sellMovingWeek: usize,
-    pub buyVolume: usize,
-    pub buyMovingWeek: usize,
+    pub sellVolume: i32,
+    pub sellMovingWeek: i64,
+    pub buyVolume: i32,
+    pub buyMovingWeek: i64,
 }
 
 impl BzTryData {

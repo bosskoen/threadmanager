@@ -1,474 +1,722 @@
 use std::str;
-pub use rusqlite::{self, Connection};
 
-use self::helper_functions::*;
+use sqlx::{Decode, Error, PgPool, Postgres, Row, Type};
 
-pub use self::custom_types::*;
+pub use custom_types::*;
 
 mod custom_types;
 mod helper_functions;
 
-/// a simpel fucntion to write to a SQLite database.
-/// this function doesn't check if the table or colums esits
-/// 
-/// # Arguments
-/// - `conn`: SQLite database connection.
-/// - `table_name`: Name of the table to check or create.
-/// - `data` : a vector that implements SQLformat.
-/// - `table_format` : a coma seperated string of colum names to tell this function were an how to write
-/// 
-/// # Example
-/// ``` no_run
-///     use library::data_base_manager::*;
-///     use rusqlite::ToSql;
-///     use rusqlite::Connection;
-/// 
-///     struct Test{
-///     id:u64, value1:String, value2: bool
-///     }
-///     impl SQLformat for Test{ 
-///      fn sqlformat(&self) -> Vec<&dyn ToSql>{
-///         vec![&self.value2, &self.id, &self.value1]
-///         }
-///     }
-///     let data = vec![Test{id:1,value1: "hello".to_string(), value2: true},
-///                     Test{id:2,value1: "world".to_string(), value2: false},
-///                     Test{id:5,value1: "cake".to_string(), value2: true}];
-///     let mut conn = Connection::open("test.db").unwrap();
-/// 
-///     write_database(&mut conn, data ,"test", "value2, id, value1");
-/// ```
-/// 
-pub fn write_database<T>(conn: &mut Connection, data: Vec<T>, table_name: &str, table_format: &str) -> Result<(),DataBaseError>
-    where T: SQLformat
-{
-    let placeholders = generate_placeholder(table_format);
-    let command: String = format!("INSERT INTO {} ({}) VALUES ({})", table_name, table_format, placeholders);
+mod async_connection;
 
-    let transaction = conn.transaction()?;
+pub use async_connection::AsyncConnection;
+pub use sqlx;
+use tokio::runtime::Runtime;
+
+pub struct SyncConnection {
+    conn: AsyncConnection,
+    tokio: tokio::runtime::Runtime,
+}
+//TODO add promision api // grent revoke, get
+//TODO cange data
+
+impl SyncConnection {
+    /// Returns a tuple containing the inner connection and the tokio runtime the connection is running in.
+    pub fn get_inner(&self) -> (PgPool, &tokio::runtime::Runtime) {
+        (self.conn.conn(), &self.tokio)
+    }
+
+    ///creates a new connection to the database using the provided credentials and database name. this connection uses ssl mode prefer.
+    pub fn new(
+        user_name: &str,
+        password: &str,
+        host: &str,
+        database: &str,
+    ) -> Result<Self, DataBaseError> {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| DataBaseError::TokioError(e.to_string()))?;
+        let conn = runtime.block_on(AsyncConnection::new(user_name, password, host, database))?;
+        Ok(Self {
+            conn,
+            tokio: runtime,
+        })
+    }
+
+    /// Creates a new connection from an existing pool and the tokio runtime it was created with and is running on.
+    pub fn from_pool(pool: PgPool, linked_runtime: Runtime) -> Result<Self, DataBaseError> {
+        let conn = AsyncConnection::from_pool(pool);
+        Ok(Self {
+            conn,
+            tokio: linked_runtime,
+        })
+    }
+    /// Creates a new connection to the database using the provided credentials, host, port, and database name. This connection uses ssl mode prefer.
+    pub fn from_port(
+        user_name: &str,
+        password: &str,
+        host: &str,
+        port: usize,
+        database: &str,
+    ) -> Result<Self, DataBaseError> {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| DataBaseError::TokioError(e.to_string()))?;
+        let conn = runtime.block_on(AsyncConnection::from_port(
+            user_name, password, host, port, database,
+        ))?;
+        Ok(Self {
+            conn,
+            tokio: runtime,
+        })
+    }
+
+    /// writes data to the database from a struct that implements the SQLformat trait.
+    ///
+    /// # Arguments
+    /// * `data` - A vector of data to write to the database.
+    /// * `table_name` - The name of the table to write to.
+    /// * `columns` - A string containing the columns to write to, separated by commas.
+    ///
+    /// # Example
+    /// ``` no_run
+    /// use library::data_base_manager::*;
+    ///
+    ///     struct Test{
+    ///     id:i64, value1:String, value2: bool
+    ///     }
+    ///     impl SQLformat<'_> for Test{
+    ///      fn sqlformat(&self) -> Vec<ToSql>{
+    ///         vec![ToSql::Bool(self.value2), ToSql::i64(self.id), ToSql::Text(&self.value1)]
+    ///         }
+    ///     }
+    ///     let data = vec![Test{id:1,value1: "hello".to_string(), value2: true},
+    ///                     Test{id:2,value1: "world".to_string(), value2: false},
+    ///                     Test{id:5,value1: "cake".to_string(), value2: true}];
+    ///     let mut conn = SyncConnection::new("myuser", "securepassword", "localhost", "mydatabase").unwrap();
+    ///
+    ///     conn.write_database(data ,"test", "value2, id, value1");
+    /// ```
+    pub fn write_database<T>(
+        &mut self,
+        data: Vec<T>,
+        table_name: &str,
+        columns: &str,
+    ) -> Result<(), DataBaseError>
+    where
+        T: for<'a> SQLformat<'a>,
     {
-        let mut stmt = transaction.prepare(&command)?;
-        for piece in data {
-            stmt.execute( &piece.sqlformat()[..])?; 
-        }
+        self.tokio
+            .block_on(self.conn.write_database(data, table_name, columns))
     }
-    transaction.commit()?;
-    Ok(())
-}
 
-/// a simpel fucntion to write to a SQLite database.
-/// this function doesn't check if the table or colums esits
-/// 
-/// # Arguments
-/// - `conn`: SQLite database connection.
-/// - `table_name`: Name of the table to check or create.
-/// - `data` : a vector that implements SQLformat.
-/// - `table_format` : a coma seperated string of colum names to tell this function were an how to write
-/// 
-/// # Example
-/// ``` no_run
-///     use library::data_base_manager::*;
-///     use rusqlite::ToSql;
-///     use rusqlite::Connection;
-/// 
-///     struct Test{
-///     id:u64, value1:String, value2: bool
-///     }
-///     impl SQLformat for Test{ 
-///      fn sqlformat(&self) -> Vec<&dyn ToSql>{
-///         vec![&self.value2, &self.id, &self.value1]
-///         }
-///     }
-///     let data = vec![Test{id:1,value1: "hello".to_string(), value2: true},
-///                     Test{id:2,value1: "world".to_string(), value2: false},
-///                     Test{id:5,value1: "cake".to_string(), value2: true}];
-///     let mut conn = Connection::open("test.db").unwrap();
-/// 
-///     write_database(&mut conn, data ,"test", "value2, id, value1");
-/// ```
-/// 
-pub fn try_write_database<T>(conn: &mut Connection, data: Vec<T>, table_name: &str, table_format: &str) -> Result<usize,DataBaseError>
-    where T: SQLformat
-{
-    let placeholders = generate_placeholder(table_format);
-    let command: String = format!("INSERT OR IGNORE INTO {} ({}) VALUES ({})", table_name, table_format, placeholders);
-
-    let mut row_changed =0;
-
-    let transaction = conn.transaction()?;
+    /// writes data to the database from a struct that implements the SQLformat trait, returning the number of rows written.
+    ///
+    /// # Arguments
+    /// * `data` - A vector of data to write to the database.
+    /// * `table_name` - The name of the table to write to.
+    /// * `columns` - A string containing the columns to write to, separated by commas.
+    ///
+    /// # Example
+    /// ``` no_run
+    ///  use library::data_base_manager::*;
+    ///
+    ///     struct Test{
+    ///     id:i64, value1:String, value2: bool
+    ///     }
+    ///     impl SQLformat<'_> for Test{
+    ///      fn sqlformat(&self) -> Vec<ToSql>{
+    ///         vec![ToSql::Bool(self.value2), ToSql::i64(self.id), ToSql::Text(&self.value1)]
+    ///         }
+    ///     }
+    ///     let data = vec![Test{id:1,value1: "hello".to_string(), value2: true},
+    ///                     Test{id:2,value1: "world".to_string(), value2: false},
+    ///                     Test{id:5,value1: "cake".to_string(), value2: true}];
+    ///     let mut conn = SyncConnection::new("myuser", "securepassword", "localhost", "mydatabase").unwrap();
+    ///
+    ///     let count: u64 = conn.try_write_database(data ,"test", "value2, id, value1").unwrap();
+    /// ```
+    pub fn try_write_database<T>(
+        &mut self,
+        data: Vec<T>,
+        table_name: &str,
+        columns: &str,
+    ) -> Result<u64, DataBaseError>
+    where
+        T: for<'a> SQLformat<'a>,
     {
-        let mut stmt = transaction.prepare(&command)?;
-        for piece in data {
-            row_changed += stmt.execute( &piece.sqlformat()[..])?; 
-        }
+        self.tokio
+            .block_on(self.conn.try_write_database(data, table_name, columns))
     }
-    transaction.commit()?;
-    Ok(row_changed)
+
+    /// Reads data from the database into a vector of structs that implement the SQLReadable trait.
+    ///
+    /// # Arguments
+    /// * `table_name` - The name of the table to read from.
+    /// * `columns` - A string containing the columns to read, separated by commas.
+    /// * `condition` - A string containing the condition to filter the rows, e.g., "WHERE id > 10".
+    ///
+    /// # Example
+    /// ``` no_run
+    ///  
+    ///     use library::data_base_manager::{*, sqlx::postgres::PgRow};
+    ///     struct User {
+    ///     id: i32, name: String, age: i32,
+    ///     }
+    ///
+    /// impl SQLReadable for User {
+    ///     fn from_row(row: &PgRow) -> Result<Self,DataBaseError> {
+    ///         let id = get_colum_value(&row, "id")?;
+    ///         let name = get_colum_value(&row, "name")?;
+    ///         let age = get_colum_value(&row, "age")?;
+    ///         Ok(User {
+    ///             id, name, age
+    ///         })
+    ///     }
+    /// }
+    ///
+    ///     let mut conn = SyncConnection::new("myuser", "securepassword", "localhost", "mydatabase").unwrap();
+    ///
+    ///     let users: Vec<User> = conn.read_database("users", "id, name, age", "WHERE age > 18").unwrap();
+    /// ```
+    pub fn read_database<T>(
+        &self,
+        table_name: &str,
+        columns: &str,
+        condition: &str,
+    ) -> Result<Vec<T>, DataBaseError>
+    where
+        T: SQLReadable,
+    {
+        self.tokio
+            .block_on(self.conn.read_database(table_name, columns, condition))
+    }
+
+    /// Deletes entries from the database based on a condition.
+    ///
+    /// # Arguments
+    /// * `table_name` - The name of the table to delete from.
+    /// * `condition` - A string containing the condition to filter the rows to delete, e.g., "WHERE id = 10".
+    ///
+    /// # Example
+    /// ``` no_run
+    ///
+    ///     use library::data_base_manager::*;
+    ///     let conn = SyncConnection::new("myuser", "securepassword", "192.168.2.18", "mydatabase").unwrap();
+    ///     conn.delete_entry("users", "id = 1").unwrap();
+    /// ```
+    pub fn delete_entry(&self, table_name: &str, condition: &str) -> Result<u64, DataBaseError> {
+        self.tokio
+            .block_on(self.conn.delete_entry(table_name, condition))
+    }
+
+    /// Ensures a SQLite table meets the required format, creating or altering it as necessary.
+    ///
+    /// # Arguments
+    /// * `table_name` - The name of the table to ensure the format for.
+    /// * `columns` - A vector of `ColumnDefinition` that defines the columns and their properties.
+    ///
+    /// # Example
+    /// ``` no_run
+    ///
+    ///  use library::{*,data_base_manager::*} ;
+    ///     let conn = SyncConnection::new("myuser", "securepassword", "192.168.2.18", "mydatabase").unwrap();
+    ///     conn.ensure_table_format("users", vec![
+    ///     define_column!("id", PostgresType::i64, true ,true), // Primary key
+    ///     define_column!("name", PostgresType::String,false ,false),
+    ///     define_column!("email", PostgresType::String,true ,false)
+    /// ]);
+    ///
+    /// ```
+    pub fn ensure_table_format(
+        &self,
+        table_name: &str,
+        columns: Vec<ColumnDefinition>,
+    ) -> Result<(), DataBaseError> {
+        self.tokio
+            .block_on(self.conn.ensure_table_format(table_name, columns))
+    }
+
+
+    /// Grants permissions to a user on a specific table.
+    /// If the `permissions` vector is empty, it grants all privileges.
+    /// 
+    /// # Arguments
+    /// - `user`: The username to grant permissions to.
+    /// - `table`: The name of the table to grant permissions on.
+    /// - `permissions`: A slice of `PgPermission` representing the permissions to grant.
+    /// 
+    /// # Example
+    /// ```no_run
+    /// 
+    ///     use library::{*,data_base_manager::*} ;
+    ///     let conn = SyncConnection::new("myuser", "securepassword", "192.168.2.18", "mydatabase").unwrap();
+    ///     conn.grant_permission("username", "my_table", &[PgPermission::Select, PgPermission::Insert]).unwrap();
+    /// ```
+    pub fn grant_permission(
+        &self,
+        user: &str,
+        table: &str,
+        permissions: &[PgPermission],
+    ) -> Result<(), DataBaseError> {
+        self.tokio
+            .block_on(self.conn.grant_permission(user, table, permissions))
+    }
+
+    /// Revokes permissions from a user on a specific table.
+    /// If the `permissions` vector is empty, it revokes all privileges.
+    /// 
+    /// # Arguments
+    /// - `user`: The username to revoke permissions from.
+    /// - `table`: The name of the table to revoke permissions on.
+    /// - `permissions`: A slice of `PgPermission` representing the permissions to revoke.
+    /// 
+    /// # Example
+    /// ```no_run
+    /// 
+    ///     use library::{*,data_base_manager::*} ;
+    ///     let conn = SyncConnection::new("myuser", "securepassword", "192.168.2.18", "mydatabase").unwrap();
+    ///     conn.revoke_permission("username", "my_table", &[PgPermission::Select, PgPermission::Insert]).unwrap();
+    /// ```
+    pub fn revoke_permission(
+        &self,
+        user: &str,
+        table: &str,
+        permissions: &[PgPermission],
+    ) -> Result<(), DataBaseError> {
+        self.tokio
+            .block_on(self.conn.revoke_permission(user, table, permissions))
+    }
+
+
+    /// Retrieves the permissions of a user on a specific table.
+    /// 
+    /// # Arguments
+    /// - `user`: The username to check permissions for.
+    /// - `table`: The name of the table to check permissions on.
+    /// 
+    /// # Returns
+    /// - `UserPermissions`: A struct containing the table name, user name, and a vector of `PgPermission` representing the user's permissions on the table.
+    /// 
+    /// # Example
+    /// ```no_run
+    /// 
+    ///     use library::{*,data_base_manager::*} ;
+    ///     let conn = SyncConnection::new("myuser", "securepassword", "192.168.2.18", "mydatabase").unwrap();
+    ///     let permissions = conn.get_permissions("username", "my_table").unwrap();
+    /// ```
+    pub fn get_permissions(&self, user: &str, table: &str) -> Result<UserPermissions, DataBaseError> {
+        self.tokio.block_on(self.conn.get_permissions(user,table))
+    }
+
+    /// Adds a user to a group in the PostgreSQL database.
+    /// 
+    /// # Arguments
+    /// - `user`: The username to add to the group.
+    /// - `group`: The name of the group to which the user will be added.
+    /// 
+    /// # Example
+    /// ```no_run
+    /// 
+    ///     use library::{*,data_base_manager::*} ;
+    ///     let conn = SyncConnection::new("myuser", "securepassword", "192.168.2.18", "mydatabase").unwrap();
+    ///     conn.add_user_to_group("username", "my_group").unwrap();
+    /// ```
+    pub fn add_user_to_group(
+        &self,
+        group_name: &str,
+        user_name: &str,
+    ) -> Result<(), DataBaseError> {
+        self.tokio
+            .block_on(self.conn.add_user_to_group(group_name, user_name))
+    }
+
+    /// Removes a user from a group in the PostgreSQL database.
+    /// 
+    /// # Arguments
+    /// - `user`: The username to remove from the group.
+    /// - `group`: The name of the group from which the user will be removed.
+    /// 
+    /// # Example
+    /// ```no_run
+    /// 
+    ///     use library::{*,data_base_manager::*} ;
+    ///     let conn = SyncConnection::new("myuser", "securepassword", "192.168.2.18", "mydatabase").unwrap();
+    ///     conn.remove_user_from_group("username", "my_group").unwrap();
+    /// ```
+    pub fn remove_user_from_group(
+        &self,
+        group_name: &str,
+        user_name: &str,
+    ) -> Result<(), DataBaseError> {
+        self.tokio
+            .block_on(self.conn.remove_user_from_group(group_name, user_name))
+    }
 }
 
-/// a simpel function to read a SQLite database
-/// this fuction doesn't check if your qerry is valid
-/// 
-/// # Arguments
-///
-/// - `conn`: SQLite database connection
-/// - `table_name`: The name of the database table to query.
-/// - `query_column_names`: A comma-separated string of column names to select.
-/// - `condition`: A string representing the condition for the SQL query,
-///   such as `"WHERE id = 1"`. Use an empty string if no condition is needed.
-///
-/// # Example
-/// ``` no_run
-///     use library::data_base_manager::*;
-///     use rusqlite::{Connection, Row};
-///     struct User {
-///     id: i32, name: String, age: i32,
-///     }
-///
-/// impl SQLReadable for User {
-///     fn from_row(row: &Row) -> Result<Self,DataBaseError> {
-///         let id = row.get(0)?;
-///         let name = row.get(1)?;
-///         let age = row.get(2)?;
-///         Ok(User {
-///             id, name, age
-///         })
-///     }
-/// }
-/// 
-///     let mut conn = Connection::open("my_database.db").unwrap();
-/// 
-///     let users: Vec<User> = read_database(&conn, "users", "id, name, age", "WHERE age > 18").unwrap();
-/// ```
-pub fn read_database<T>(conn: &Connection, table_name: &str, query_column_names: &str, condition: &str) -> Result<Vec<T>,DataBaseError>
-where
-    T: SQLReadable,
-{
-    let command = format!(
-        "SELECT {} FROM {} {};",
-        query_column_names, table_name, condition
-    );
-
-    let mut stmt  = conn.prepare(&command)?;
-    
-    let x = stmt.query_and_then([], |row| T::from_row(row))?
-    .collect();
-    x
-}
-
-///  Deletes an entry from the specified table based on the given condition.
-///  give a error if condition is emptie
-/// 
-/// # Arguments
-///
-/// - `conn`: A reference to the `rusqlite::Connection` object for the database.
-/// - `table_name`: The name of the table to delete from.
-/// - `condition`: The SQL condition specifying which rows to delete (e.g., `"id = 1"`).
-/// 
-/// # Example
-/// ``` no_run
-///     use library::data_base_manager::*;
-///     use rusqlite::Connection;
-///     let conn = Connection::open("my_database.db").unwrap();
-///     delete_entry(&conn, "users", "id = 1").unwrap();
-/// ```
-pub fn delete_entry(conn: &Connection, table_name: &str, condition: &str)-> Result<usize,DataBaseError>{
-    if condition.trim().is_empty(){
-        return Err(DataBaseError::NoConditionFound("Can't delete entire database at once".to_string())); // discriptor
-    }
-    let command = format!("DELETE FROM {} WHERE {}", table_name,condition);
-    Ok(conn.execute(&command, [])?)
-}
-
-/// Ensures a SQLite table meets the required format, creating or altering it as necessary.
-///
-/// # Arguments
-/// - `conn`: SQLite database connection.
-/// - `table_name`: Name of the table to check or create.
-/// - `required_columns`: A vector of tuples (column name, column type, not_null ,is_primary_key).
-///
-/// # Example
-/// ``` no_run
-///     use library::{*,data_base_manager::*} ;
-///     use rusqlite::Connection;
-///     let mut conn = Connection::open("test.db").unwrap();
-///     ensure_table_format(&mut conn, "users", vec![
-///     define_column!("id", "INTEGER", true ,true), // Primary key
-///     define_column!("name", "TEXT",false ,false),
-///     define_column!("email", "TEXT",true ,false)
-/// ]);
-/// ```
-pub fn ensure_table_format(
-    conn: &mut Connection,
-    table_name: &str,
-    required_columns: Vec<ColumnDefinition>,
-) -> Result<(),DataBaseError> {
-    let mut lock_tracaction = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-
-    // Step 1: Check if the table exists and get its current format
-    let pragma_query = format!("PRAGMA table_info({});", table_name);
-
-    let mut stmt = lock_tracaction.prepare(&pragma_query)?;
-
-    let pre_existing_columns: Vec<(String, String, bool, bool)> = stmt
-    .query_map([], |row| {
-        let col_name: String = row.get(1)?; // Column name
-        let col_type: String = row.get::<_,String>(2)?.trim().split_whitespace().next().unwrap_or_default().to_owned(); // Column type
-        let not_null: bool = row.get(3)?; // is not null
-        let is_primary_key: bool = row.get::<_, i32>(5)? != 0; // Is primary key
-
-        Ok((col_name, col_type, not_null, is_primary_key))
-    })?
-    .collect::<Result<Vec<_>, _>>()?;
-
-    let existing_columns: Vec<ColumnDefinition> = pre_existing_columns.iter()
-    .map(|(col_name, col_type, not_null, is_primary_key)| {
-        ColumnDefinition::new(col_name, col_type, *not_null, *is_primary_key)
-    })
-    .collect();
-
-    drop(stmt);
-    if existing_columns.is_empty() {
-        create_table(&lock_tracaction, &required_columns, table_name)?;
-    } else {
-        alter_table(&mut lock_tracaction, &required_columns, &existing_columns,table_name)?;
-    }
-    lock_tracaction.commit()?;
-    Ok(())
+pub fn get_colum_value<T: for<'r> Decode<'r, Postgres> + Type<Postgres>>(
+    row: &PgRow,
+    colum_name: &str,
+) -> Result<T, Error> {
+    row.try_get::<T, &str>(colum_name)
 }
 
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
-    use rusqlite::{Connection,Row, ToSql};
+    use sqlx::{postgres::PgPoolOptions, PgPool, Row};
+
+    fn get_runtime_and_pool() -> Result<(tokio::runtime::Runtime, PgPool), DataBaseError> {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| DataBaseError::TokioError(e.to_string()))?;
+
+        let pool = rt.block_on(
+            PgPoolOptions::new()
+                .max_connections(5)
+                .acquire_timeout(Duration::from_secs(10))
+                .connect("postgres://devtest:test@localhost/devtest?sslmode=prefer"),
+        )?;
+        Ok((rt, pool))
+    }
 
     #[derive(Debug)]
     struct TestItem {
-        id: u64,
+        id: i32,
         value1: String,
         value2: bool,
     }
 
-    impl SQLformat for TestItem {
-        fn sqlformat(&self) -> Vec<&dyn ToSql> {
-            vec![&self.value2, &self.id, &self.value1]
+    impl SQLformat<'_> for TestItem {
+        fn sqlformat(&self) -> Vec<ToSql> {
+            vec![
+                ToSql::Bool(self.value2),
+                ToSql::i32(self.id),
+                ToSql::Text(&self.value1),
+            ]
         }
     }
 
     impl SQLReadable for TestItem {
-        fn from_row(row: &Row) -> Result<Self, DataBaseError> {
+        fn from_row(row: &PgRow) -> Result<Self, DataBaseError> {
             Ok(TestItem {
-                id: row.get(0)?,
-                value1: row.get(1)?,
-                value2: row.get(2)?,
+                id: row.get::<i32, usize>(0),
+                value1: row.get::<_, usize>(1),
+                value2: get_colum_value(row, "value2")?,
             })
         }
     }
 
     #[test]
-    fn test_write_database() -> Result<(), DataBaseError> {
-        let mut conn = Connection::open_in_memory()?;
-        conn.execute(
-            "CREATE TABLE test (value2 BOOLEAN, id INTEGER PRIMARY KEY, value1 TEXT);",
-            [],
+    fn test_write_database_plain_insert() -> Result<(), DataBaseError> {
+        let (rt, pool) = get_runtime_and_pool()?;
+        let table = "test_table_plain_insert";
+
+        rt.block_on(sqlx::query(&format!("DROP TABLE IF EXISTS {table}")).execute(&pool))?;
+        rt.block_on(
+            sqlx::query(&format!(
+                "CREATE TABLE {table} (value2 BOOLEAN, id INTEGER PRIMARY KEY, value1 TEXT);"
+            ))
+            .execute(&pool),
+        )?;
+
+        // Ensure table exists
+        let mut conn = SyncConnection::from_pool(pool.clone(), rt)?;
+
+        let data = vec![
+            TestItem {
+                id: 10,
+                value1: "Test A".to_string(),
+                value2: true,
+            },
+            TestItem {
+                id: 11,
+                value1: "Test B".to_string(),
+                value2: false,
+            },
+        ];
+
+        conn.write_database(data, table, "value2, id, value1")?;
+        let (_, rt) = conn.get_inner();
+
+        let rows = rt.block_on(
+            sqlx::query(&format!(
+                "SELECT id, value1, value2 FROM {table} ORDER BY id"
+            ))
+            .fetch_all(&pool),
+        )?;
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].get::<i32, _>(0), 10);
+        assert_eq!(rows[0].get::<String, _>(1), "Test A");
+        assert_eq!(rows[0].get::<bool, _>(2), true);
+        assert_eq!(rows[1].get::<i32, _>(0), 11);
+        assert_eq!(rows[1].get::<String, _>(1), "Test B");
+        assert_eq!(rows[1].get::<bool, _>(2), false);
+
+        rt.block_on(sqlx::query(&format!("DROP TABLE IF EXISTS {table}")).execute(&pool))?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_write_database_empty_input() -> Result<(), DataBaseError> {
+        let (rt, pool) = get_runtime_and_pool()?;
+        let table = "test_table_write_empty";
+
+        rt.block_on(sqlx::query(&format!("DROP TABLE IF EXISTS {table}")).execute(&pool))?;
+        rt.block_on(
+            sqlx::query(&format!(
+                "CREATE TABLE {table} (value2 BOOLEAN, id INTEGER PRIMARY KEY, value1 TEXT);"
+            ))
+            .execute(&pool),
+        )?;
+
+        let mut conn = SyncConnection::from_pool(pool.clone(), rt)?;
+        let data: Vec<TestItem> = vec![];
+        conn.write_database(data, table, "value2, id, value1")?;
+
+        let (_, rt) = conn.get_inner();
+
+        let count: i64 = rt.block_on(
+            sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}")).fetch_one(&pool),
+        )?;
+        assert_eq!(count, 0);
+
+        rt.block_on(sqlx::query(&format!("DROP TABLE IF EXISTS {table}")).execute(&pool))?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_write_database_duplicate_primary_key() -> Result<(), DataBaseError> {
+        let (rt, pool) = get_runtime_and_pool()?;
+        let table = "test_table_duplicates";
+
+        rt.block_on(sqlx::query(&format!("DROP TABLE IF EXISTS {table}")).execute(&pool))?;
+        rt.block_on(
+            sqlx::query(&format!(
+                "CREATE TABLE {table} (id INTEGER PRIMARY KEY, value1 TEXT, value2 BOOLEAN);"
+            ))
+            .execute(&pool),
         )?;
 
         let data = vec![
             TestItem {
                 id: 1,
-                value1: "Hello".to_string(),
+                value1: "First".to_string(),
                 value2: true,
             },
             TestItem {
-                id: 2,
-                value1: "World".to_string(),
+                id: 1,
+                value1: "Duplicate".to_string(),
                 value2: false,
             },
         ];
 
-        write_database(&mut conn, data, "test", "value2, id, value1")?;
+        let mut conn = SyncConnection::from_pool(pool.clone(), rt)?;
+        let result = conn.write_database(data, table, "value2, id, value1");
+        assert!(result.is_err());
 
-        let mut stmt = conn.prepare("SELECT id, value1, value2 FROM test ORDER BY id ASC;")?;
-        let rows: Vec<TestItem> = stmt
-            .query_and_then([], |row| TestItem::from_row(row))?
-            .collect::<Result<Vec<_>, _>>()?;
+        let (_, rt) = conn.get_inner();
 
-        assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0].id, 1);
-        assert_eq!(rows[0].value1, "Hello");
-        assert_eq!(rows[0].value2, true);
-        assert_eq!(rows[1].id, 2);
-        assert_eq!(rows[1].value1, "World");
-        assert_eq!(rows[1].value2, false);
-
+        rt.block_on(sqlx::query(&format!("DROP TABLE IF EXISTS {table}")).execute(&pool))?;
         Ok(())
     }
 
     #[test]
-    fn test_read_database() -> Result<(),DataBaseError> {
-        let conn = Connection::open_in_memory()?;
-        conn.execute(
-            "CREATE TABLE test (id INTEGER PRIMARY KEY, value1 TEXT, value2 BOOLEAN);",
-            [],
-        )?;
-        conn.execute(
-            "INSERT INTO test (id, value1, value2) VALUES (1, 'Hello', 1), (2, 'World', 0);",
-            [],
+    fn test_read_database_invalid_columns() -> Result<(), DataBaseError> {
+        let (rt, pool) = get_runtime_and_pool().unwrap();
+        let table = "test_table_invalid_column";
+
+        rt.block_on(sqlx::query(&format!("DROP TABLE IF EXISTS {table}")).execute(&pool))
+            .unwrap();
+        rt.block_on(
+            sqlx::query(&format!(
+                "CREATE TABLE {table} (id INTEGER PRIMARY KEY, value1 TEXT, value2 BOOLEAN);"
+            ))
+            .execute(&pool),
+        )
+        .unwrap();
+
+        let conn = SyncConnection::from_pool(pool.clone(), rt).unwrap();
+
+        let result: Result<Vec<TestItem>, DataBaseError> =
+            conn.read_database(table, "nonexistent_column", "");
+        assert!(result.is_err());
+
+        let (_, rt) = conn.get_inner();
+
+        rt.block_on(sqlx::query(&format!("DROP TABLE IF EXISTS {table}")).execute(&pool))?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_read_database() -> Result<(), DataBaseError> {
+        let (rt, pool) = get_runtime_and_pool()?;
+        let table = "test_table_read";
+
+        rt.block_on(sqlx::query(&format!("DROP TABLE IF EXISTS {table}")).execute(&pool))?;
+        rt.block_on(
+            sqlx::query(&format!(
+                "CREATE TABLE {table} (id INTEGER PRIMARY KEY, value1 TEXT, value2 BOOLEAN);"
+            ))
+            .execute(&pool),
         )?;
 
-        let rows: Vec<TestItem> = read_database(&conn, "test", "id, value1, value2", "WHERE value2 = 1")?;
+        rt.block_on(sqlx::query(&format!(
+            "INSERT INTO {table} (id, value1, value2) VALUES (1, 'Hello', true), (2, 'World', false);"
+        )).execute(&pool))?;
+
+        let conn = SyncConnection::from_pool(pool.clone(), rt)?;
+        let rows: Vec<TestItem> =
+            conn.read_database(table, "id, value1, value2", "WHERE value2 = true")?;
+
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].id, 1);
         assert_eq!(rows[0].value1, "Hello");
         assert_eq!(rows[0].value2, true);
 
+        let (_, rt) = conn.get_inner();
+
+        rt.block_on(sqlx::query(&format!("DROP TABLE IF EXISTS {table}")).execute(&pool))?;
         Ok(())
     }
 
     #[test]
-    fn test_delete_entry() -> Result<(),DataBaseError> {
-        let conn = Connection::open_in_memory()?;
-        conn.execute(
-            "CREATE TABLE test (id INTEGER PRIMARY KEY, value1 TEXT, value2 BOOLEAN);",
-            [],
-        )?;
-        conn.execute(
-            "INSERT INTO test (id, value1, value2) VALUES (1, 'Hello', 1), (2, 'World', 0);",
-            [],
+    fn test_delete_entry() -> Result<(), DataBaseError> {
+        let (rt, pool) = get_runtime_and_pool()?;
+        let table = "test_table_delete";
+
+        rt.block_on(sqlx::query(&format!("DROP TABLE IF EXISTS {table}")).execute(&pool))?;
+        rt.block_on(
+            sqlx::query(&format!(
+                "CREATE TABLE {table} (id INTEGER PRIMARY KEY, value1 TEXT, value2 BOOLEAN);"
+            ))
+            .execute(&pool),
         )?;
 
-        let deleted_rows = delete_entry(&conn, "test", "id = 1")?;
+        rt.block_on(sqlx::query(&format!(
+            "INSERT INTO {table} (id, value1, value2) VALUES (1, 'Hello', true), (2, 'World', false);"
+        )).execute(&pool))?;
+
+        let conn = SyncConnection::from_pool(pool.clone(), rt)?;
+        let deleted_rows = conn.delete_entry(table, "id = 1")?;
         assert_eq!(deleted_rows, 1);
 
-        let remaining: Vec<(u64, String, bool)> = conn
-            .prepare("SELECT id, value1, value2 FROM test;")?
-            .query_map([], |row| {
-                Ok((row.get::<_,u64>(0)?, row.get::<_,String>(1)?, row.get::<_, i32>(2)? != 0))
-            })?
-            .collect::<Result<Vec<_>,_>>()?;
-        assert_eq!(remaining.len(), 1);
-        assert_eq!(remaining[0].0, 2);
-        assert_eq!(remaining[0].1, "World");
-        assert_eq!(remaining[0].2, false);
+        let (_, rt) = conn.get_inner();
 
+        let result = rt.block_on(
+            sqlx::query(&format!("SELECT id, value1, value2 FROM {table}")).fetch_all(&pool),
+        )?;
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].get::<i32, _>(0), 2);
+        assert_eq!(result[0].get::<String, _>(1), "World");
+        assert_eq!(result[0].get::<bool, _>(2), false);
+        rt.block_on(sqlx::query(&format!("DROP TABLE IF EXISTS {table}")).execute(&pool))?;
         Ok(())
     }
 
     #[test]
-    fn test_ensure_table_format() -> Result<(),DataBaseError> {
-        let mut conn = Connection::open_in_memory()?;
+    fn test_create_table_with_ensure_table_format() -> Result<(), DataBaseError> {
+        let (rt, pool) = get_runtime_and_pool()?;
+        let table = "test_create_table_with_ensure";
 
-        let columns = vec![
-            ColumnDefinition::new("id", "INTEGER", true, true),
-            ColumnDefinition::new("value1", "TEXT", false, false),
-            ColumnDefinition::new("value2", "BOOLEAN", false, false),
-        ];
+        rt.block_on(sqlx::query(&format!("DROP TABLE IF EXISTS {table}")).execute(&pool))?;
 
-        ensure_table_format(&mut conn, "test", columns)?;
+        let conn = SyncConnection::from_pool(pool.clone(), rt)?;
 
-        // Verify table creation
-        let pragma_result: Vec<(String, String)> = conn
-            .prepare("PRAGMA table_info('test');")?
-            .query_map([], |row| Ok((row.get(1)?, row.get(2)?)))?
-            .collect::<Result<Vec<_>,_>>()?;
-        assert_eq!(pragma_result.len(), 3);
-        assert_eq!(pragma_result[0], ("id".to_string(), "INTEGER".to_string()));
-        assert_eq!(pragma_result[1], ("value1".to_string(), "TEXT".to_string()));
-        assert_eq!(pragma_result[2], ("value2".to_string(), "BOOLEAN".to_string()));
+        conn.ensure_table_format(
+            table,
+            vec![
+                ColumnDefinition::new("id", PostgresType::i32, true, true),
+                ColumnDefinition::new("value1", PostgresType::String, false, false),
+                ColumnDefinition::new("value2", PostgresType::bool, false, false),
+            ],
+        )?;
 
-        Ok(())
-    }
-    #[test]
-    fn test_write_database_empty_input() -> Result<(), DataBaseError> {
-        let mut conn = Connection::open_in_memory()?;
-        conn.execute("CREATE TABLE test (value2 BOOLEAN, id INTEGER PRIMARY KEY, value1 TEXT);", [])?;
-        let data: Vec<TestItem> = vec![];
-        write_database(&mut conn, data, "test", "value2, id, value1")?;
-        let count: u64 = conn.query_row("SELECT COUNT(*) FROM test;", [], |row| row.get(0))?;
-        assert_eq!(count, 0);
-        Ok(())
-    }
-    #[test]
-    fn test_read_database_invalid_columns() {
-        let conn = Connection::open_in_memory().unwrap();
-        conn.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, value1 TEXT, value2 BOOLEAN);", []).unwrap();
-        let result: Result<Vec<TestItem>, DataBaseError> = read_database(&conn, "test", "nonexistent_column", "");
-        assert!(result.is_err());
-    }
-    #[test]
-    fn test_concurrent_ensure_table_format() -> Result<(),DataBaseError> {
-        use std::thread;
-        use std::path::Path;
-        use std::fs;
+        let (_, rt) = conn.get_inner();
 
-        // URI for shared in-memory database across connections
-        let db_file = "my_database.db"; // File path for the database file
-        let mut conn1 = Connection::open(db_file)?;
-        let mut conn2 = Connection::open(db_file)?;
-    
-        // Define the column structure for the table
-        let columns = vec![
-            ColumnDefinition::new("id", "INTEGER", true, true),
-            ColumnDefinition::new("value1", "TEXT", false, false),
-            ColumnDefinition::new("value2", "BOOLEAN", false, false),
-        ];
-    
-        let columns2 = vec![
-            ColumnDefinition::new("id", "INTEGER", true, true),
-            ColumnDefinition::new("value1", "TEXT", false, false),
-            ColumnDefinition::new("value3", "INTEGER", true, false),
-        ];
-    
-        let handle = thread::spawn(move || {
-            ensure_table_format(&mut conn2, "test", columns2).unwrap();
-        });
-    
-        ensure_table_format(&mut conn1, "test", columns)?;
-    
-        handle.join().unwrap();
-    
-        // Query the table using conn1 to see the schema and check if value3 exists
-        let mut stmt = conn1.prepare("PRAGMA table_info(test);")?;
-        let columns_info = stmt.query_map([], |row| {
-            Ok((
-                row.get::<_, String>(1)?,  // Column name
-                row.get::<_, String>(2)?,  // Column type
+        // Check columns exist
+        let rows = rt.block_on(
+            sqlx::query(&format!(
+                "SELECT column_name FROM information_schema.columns WHERE table_name = '{table}';"
             ))
-        })?;
-    
-        let columns_info: Vec<(String, String)> = columns_info.collect::<Result<_, _>>()?;
-        drop(stmt);
-        drop(conn1);
+            .fetch_all(&pool),
+        )?;
 
-        if Path::new(db_file).exists() {
-            fs::remove_file(db_file).unwrap();
-        }
+        let column_names: Vec<String> = rows.iter().map(|r| r.get(0)).collect();
 
-        let mut value3_found = false;
-        for (name, _) in columns_info {
-            if name == "value3" {
-                value3_found = true;
-            }
-        }
-    
-        // Assert that value3 is included in the schema after conn2 modified it
-        assert!(value3_found, "Expected column 'value3' not found in the table");
-    
-    
-        // The columns_info should now include "value3" if conn2 modified the schema
+        assert!(column_names.contains(&"id".to_string()));
+        assert!(column_names.contains(&"value1".to_string()));
+        assert!(column_names.contains(&"value2".to_string()));
+        rt.block_on(sqlx::query(&format!("DROP TABLE IF EXISTS {table}")).execute(&pool))?;
         Ok(())
     }
+
     #[test]
-    fn test_write_database_duplicate_primary_key() -> Result<(), DataBaseError> {
-        let mut conn = Connection::open_in_memory()?;
-        conn.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, value1 TEXT, value2 BOOLEAN);", [])?;
-        let data = vec![
-            TestItem { id: 1, value1: "First".to_string(), value2: true },
-            TestItem { id: 1, value1: "Duplicate".to_string(), value2: false },
-        ];
-        let result = write_database(&mut conn, data, "test", "value2, id, value1");
-        assert!(result.is_err());
+    fn test_extend_existing_table_with_new_columns() -> Result<(), DataBaseError> {
+        let (rt, pool) = get_runtime_and_pool()?;
+        let table = "test_extend_table";
+
+        rt.block_on(sqlx::query(&format!("DROP TABLE IF EXISTS {table}")).execute(&pool))?;
+        rt.block_on(sqlx::query(&format!("CREATE TABLE {table} (id INTEGER);")).execute(&pool))?;
+
+        let conn = SyncConnection::from_pool(pool.clone(), rt)?;
+
+        // Add additional optional columns
+        conn.ensure_table_format(
+            table,
+            vec![
+                ColumnDefinition::new("id", PostgresType::i32, false, false),
+                ColumnDefinition::new("value1", PostgresType::String, false, false),
+                ColumnDefinition::new("value2", PostgresType::bool, false, false),
+            ],
+        )?;
+
+        let (_, rt) = conn.get_inner();
+
+        let rows = rt.block_on(
+            sqlx::query(&format!(
+                "SELECT column_name FROM information_schema.columns WHERE table_name = '{table}';"
+            ))
+            .fetch_all(&pool),
+        )?;
+        let column_names: Vec<String> = rows.iter().map(|r| r.get(0)).collect();
+
+        assert!(column_names.contains(&"value1".to_string()));
+        assert!(column_names.contains(&"value2".to_string()));
+        rt.block_on(sqlx::query(&format!("DROP TABLE IF EXISTS {table}")).execute(&pool))?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_ensure_table_format_fails_on_invalid_constraint_change() -> Result<(), DataBaseError> {
+        let (rt, pool) = get_runtime_and_pool()?;
+        let table = "test_constraint_conflict";
+
+        rt.block_on(sqlx::query(&format!("DROP TABLE IF EXISTS {table}")).execute(&pool))?;
+        rt.block_on(sqlx::query(&format!("CREATE TABLE {table} (id INTEGER);")).execute(&pool))?;
+
+        let conn = SyncConnection::from_pool(pool.clone(), rt)?;
+
+        // Try to redefine `id` as NOT NULL and PRIMARY KEY (should fail)
+        let result = conn.ensure_table_format(
+            table,
+            vec![ColumnDefinition::new("id", PostgresType::i32, true, true)],
+        );
+        let (_, rt) = conn.get_inner();
+
+        assert!(
+        result.is_err(),
+        "Expected ensure_table_format to fail when trying to add NOT NULL or PRIMARY KEY to existing column"
+    );
+        rt.block_on(sqlx::query(&format!("DROP TABLE IF EXISTS {table}")).execute(&pool))?;
         Ok(())
     }
 }
