@@ -6,8 +6,7 @@ use std::{
 
 use humansize::{format_size, BINARY};
 use library::{
-    data_base_manager::{get_colum_value, sqlx, DataBaseError, SyncConnection},
-    format_duration, impl_status, DateTime, Local, Status,
+    data_base_manager::{get_colum_value, sqlx, DataBaseError, SyncConnection}, error_handeler::Printer, format_duration, impl_status, DateTime, Local, Status
 };
 
 use crate::parsing::{DataBaseLogin, Settings};
@@ -35,6 +34,7 @@ impl Context {
         stopflag: Arc<AtomicBool>,
         status: Arc<Mutex<Box<dyn Status>>>,
         settings_path: String,
+        printer: &Printer
     ) -> Result<Self, PricingError> {
         let settings = Settings::get(&settings_path)?;
         let data_table_name = settings.table_name;
@@ -44,7 +44,7 @@ impl Context {
 
         let conn = SyncConnection::new(&userdatabase.user_name, &userdatabase.password, &userdatabase.host, &userdatabase.database_name)
             .map_err(|err| PricingError::DataBaseError(err.to_string()))?;
-        crate::validate_data_base(DataBaseLogin::get(&settings.owner_login_path)?, &data_table_name, &lookup_table_name)?;
+        crate::validate_data_base(DataBaseLogin::get(&settings.owner_login_path)?, &data_table_name, &lookup_table_name, &userdatabase.user_name, printer)?;
         initialise_status(&conn, &data_table_name, &status)?;
 
         Ok(Context {
@@ -137,8 +137,7 @@ pub enum PricingError {
     JSONReadError,
     JSONFormatError(String),
     NonFatal,
-    SQLformatError(String),
-    SQLReadWrite(String),
+    SQLError(String),
 }
 
 impl Display for PricingError {
@@ -154,15 +153,14 @@ impl Display for PricingError {
             PricingError::JSONReadError => write!(f, "JSON_READ_ERROR: failed to parse the json file."),
             PricingError::JSONFormatError(cause) => write!(f, "JSON_FORMAT_ERROR: json file didn't have the expected format:\n{}", cause),
             PricingError::NonFatal => write!(f, "a not fatal error that shouldn't be propegated"),
-            PricingError::SQLformatError(messig) => write!(f, "SQL_FORMAT_ERROR: {}", messig),
-            PricingError::SQLReadWrite(messig) => write!(f, "SQL_READ_WRITE: error while reading or writing to the database{}", messig),
+            PricingError::SQLError(messig) => write!(f, "error while comunicating with the database: {}", messig),
         }
     }
 }
 
 impl From<DataBaseError> for PricingError {
     fn from(value: DataBaseError) -> Self {
-        PricingError::SQLReadWrite(format!("{:?}", value))
+        PricingError::SQLError(format!("{:?}", value))
     }
 }
 

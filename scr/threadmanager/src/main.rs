@@ -55,7 +55,7 @@ fn main() -> ExitCode {
             #[cfg(unix)]
             {
                 settings_path = r"./settings/genaral_setting.toml";
-            } //TODO fille structere uit zoeken
+            }
         }
     } else {
         settings_path = &arg[1];
@@ -211,10 +211,8 @@ fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
-//TODO test bz plugin
-//TODO set up exe or raspbery
+
 //TODO let color
-//TODO test led pwm on raspberry
 //TODO led nornal mode auto complete
 
 //TODO windows color support ( qof , cargo handles it )

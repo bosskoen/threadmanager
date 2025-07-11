@@ -522,7 +522,7 @@ fn thread_logic(
                             if let Err(_) = printer.send(
                                 ErrorOperation::PrintAndChangeLedError(
                                     name.clone(),
-                                    format!("Thread stopped with errors {}", err),
+                                    format!("Thread stopped with errors:\n {}", err),
                                     RGB::WARNING(),
                                     RGB::RED(),
                                     error_handeler::LedNumber::LED1,
@@ -600,7 +600,7 @@ fn thread_logic(
             }
         }
         drop(start);
-        drop(lib); //TODO doesnt unload
+        drop(lib); //TODO doesnt unload on unix
     }
 }
 

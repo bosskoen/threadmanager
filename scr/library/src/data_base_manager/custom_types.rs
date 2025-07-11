@@ -2,21 +2,9 @@ use std::fmt;
 use sqlx::Error;
 pub use sqlx::postgres::PgRow;
 
-/// Macro to define a column for a table schema.
-/// 
-/// # Example
-/// ```
-/// use library::define_column;
-/// use library::data_base_manager::PostgresType;
-/// use library::data_base_manager::ColumnDefinition;
-/// let col = define_column!("id", PostgresType::i32, true, true);
-/// ```
-#[macro_export]
-macro_rules! define_column {
-    ($name:expr, $col_type:expr, $not_null:expr, $is_primary_key:expr) => {
-        ColumnDefinition::new($name, $col_type, $not_null, $is_primary_key)
-    };
-}
+use crate::data_base_manager::normalize_identifier;
+
+
 
 /// Macro to implement [`SQLReadable`] for a struct.
 /// 
@@ -154,7 +142,7 @@ pub enum PostgresType {
     String,   // TEXT
     i16Auto,  // SMALLSERIAL
     i32Auto,  // SERIAL
-    i64Auto,  // BIGSERIAL
+    i64Auto,  // BIGSERIAL 
 }
 
 impl PostgresType {
@@ -190,25 +178,234 @@ impl PostgresType {
             _ => None,
         }
     }
+
+    pub fn base_type(&self) -> PostgresType {
+        match self {
+            PostgresType::i16Auto => PostgresType::i16,
+            PostgresType::i32Auto => PostgresType::i32,
+            PostgresType::i64Auto => PostgresType::i64,
+            _ => *self,
+        }
+    }
 }
 
-/// Definition of a table column.
-pub struct ColumnDefinition<'a> {
-    name: &'a str,
-    col_type: PostgresType,
-    not_null: bool,
-    is_primary_key: bool,
-}
 
-impl<'a> ColumnDefinition<'a> {
-    /// Create a new column definition.
-    pub fn new(name: &'a str, col_type: PostgresType, not_null: bool, is_primary_key: bool) -> Self {
-        Self { name, col_type, not_null, is_primary_key }
+
+pub fn can_add_column_to_non_empty_table(col: &ColumnDefinition) -> bool {
+    if !col.not_null {
+        return true; // NULLs are allowed
     }
 
+    if col.auto_increment && !col.primary_key {
+        return true; // SERIAL/BIGSERIAL types auto-fill via nextval()
+    }
+
+    if col.default.is_none() {
+        return false; // NOT NULL without default is unsafe
+    }
+
+    // If it's primary or must be unique and not null, ensure default is unique
+    if !col.primary_key && col.unique && col.not_null {
+        if let Some(default) = &col.default {
+            let lowered = default.to_lowercase();
+            if lowered.contains("nextval(") {
+                return true; // Sequence-based default is safe
+            } else {
+                return false; // Default might not be unique
+            }
+        }
+    }
+
+    // Otherwise, default exists and no strong uniqueness constraint
+    true
+}
+
+/// Definition of a table column used to create or compare schema elements.
+///
+/// Each column definition includes type, constraints (e.g., not null, unique),
+/// optional default values, and whether it uses an auto-incrementing type.
+#[derive(Debug, Clone)]
+pub struct ColumnDefinition {
+    /// Name of the column in the table.
+    name: String,
+
+    /// PostgreSQL type of the column, including auto-incrementing variants.
+    col_type: PostgresType,
+
+    /// Whether the column must not contain NULL values.
+    not_null: bool,
+
+    /// Whether this column is the primary key of the table.
+    primary_key: bool,
+
+    /// Whether this column must have unique values.
+    unique: bool,
+
+    /// Optional default value as a raw SQL string.
+    default: Option<String>,
+
+    /// Whether the column is auto-incrementing (e.g., `SERIAL`, `BIGSERIAL`).
+    auto_increment: bool,
+}
+
+impl<'a> ColumnDefinition {
+ /// Create a new column definition.
+    ///
+    /// If `primary_key` is true, `not_null` and `is_unique` are forced to `true`.
+    /// If `col_type` is an auto-increment type (`i16Auto`, `i32Auto`, `i64Auto`),
+    /// `not_null` is forced to `true`, and any `default` is set to None.
+    ///
+    /// # Arguments
+    /// - `name`: The column name.
+    /// - `col_type`: The column's PostgreSQL type.
+    /// - `not_null`: Whether the column disallows NULL values.
+    /// - `primary_key`: Whether the column is a primary key.
+    /// - `is_unique`: Whether the column should be marked as `UNIQUE`.
+    /// - `default`: Optional default value expression.
+    ///
+    /// # Example
+    /// ```no_run
+    /// use library::data_base_manager::*;
+    /// let col = ColumnDefinition::new(
+    ///     "id".to_string(),
+    ///     PostgresType::i64Auto,
+    ///     false,
+    ///     true,
+    ///     false,
+    ///     None
+    /// );
+    /// ```
+    pub fn new(name: String, col_type: PostgresType, not_null: bool, primary_key: bool, is_unique: bool, default: Option<String>) -> Self {
+    let mut not_null = not_null;
+        let mut unique = is_unique;
+        let mut default = default;
+
+        if primary_key {
+            not_null = true;    // Primary keys must be NOT NULL
+            unique = true;  // Primary keys are already UNIQUE
+        }
+
+        let auto_increment = match col_type {
+            PostgresType::i16Auto | PostgresType::i32Auto | PostgresType::i64Auto => {
+                not_null = true;
+                default = None; // Let SERIAL/BIGSERIAL use implicit sequence
+                true
+            }
+            _ => {
+                if let Some(ref def) = default {
+                    def.to_lowercase().contains("nextval(")
+                } else {
+                    false
+                }
+            }
+        };
+
+        Self {
+            name: normalize_identifier(&name),
+            col_type,
+            not_null,
+            primary_key,
+            unique,
+            default,
+            auto_increment
+        }
+    }
+
+    /// Converts the column definition into a SQL column fragment.
+    ///
+    /// The result includes type, constraints, and optional default clause.
+    /// Suitable for use in `CREATE TABLE` or `ALTER TABLE ADD COLUMN`.
+    ///
+    /// # Example
+    /// ```
+    /// use library::data_base_manager::*;
+    /// let col = ColumnDefinition::new(
+    ///     "username".to_string(),
+    ///     PostgresType::String,
+    ///     true,
+    ///     false,
+    ///     true,
+    ///     Some("'guest'".to_string())
+    /// );
+    /// assert_eq!(
+    ///     col.to_sql(true),
+    ///     "username TEXT UNIQUE NOT NULL DEFAULT 'guest'"
+    /// );
+    /// ```
+    pub fn to_sql(&self, is_single_pk: bool) -> String {
+        let mut sql = format!("{} {}", self.name, self.col_type.to_sql_type());
+
+        if self.primary_key { 
+            if is_single_pk{ sql.push_str(" PRIMARY KEY");}
+        }else{
+            if self.unique {
+                sql.push_str(" UNIQUE");
+            }
+            if self.not_null {
+            sql.push_str(" NOT NULL");
+            }
+        }
+        if self.col_type != PostgresType::i16Auto
+            && self.col_type != PostgresType::i32Auto
+            && self.col_type != PostgresType::i64Auto
+        {
+            if let Some(ref default) = self.default {
+            sql.push_str(&format!(" DEFAULT {}", default));
+            }
+        }
+        sql
+    }
+    
+/// Compares two column definitions for logical schema equality.
+    ///
+    /// This comparison accounts for:
+    /// - Exact name match
+    /// - Type match (or both are auto-increment and same base type)
+    /// - Identical nullability, primary key, uniqueness, and auto-increment flags
+    /// - Same default expression (or both are `None`)
+    ///
+    /// # Example
+    /// ```no_run
+    /// use library::data_base_manager::*;
+    /// let a = ColumnDefinition::new(
+    ///     "id".to_string(),
+    ///     PostgresType::i32Auto,
+    ///     true,
+    ///     true,
+    ///     true,
+    ///     None
+    /// );
+    /// let b = ColumnDefinition::new(
+    ///     "id".to_string(),
+    ///     PostgresType::i64Auto,
+    ///     true,
+    ///     true,
+    ///     true,
+    ///     None
+    /// );
+    /// assert!(a.are_same(&b)); // Same base type and both auto-increment
+    /// ```
+pub fn are_same(&self, other: &ColumnDefinition) -> bool {
+    self.name == other.name &&
+    (self.col_type == other.col_type || (
+        self.auto_increment &&
+        other.auto_increment &&
+        self.col_type.base_type() == other.col_type.base_type()
+    )) &&
+    self.not_null == other.not_null &&
+    self.primary_key == other.primary_key &&
+    self.unique == other.unique &&
+    self.auto_increment == other.auto_increment &&
+    match (&self.default, &other.default) {
+        (Some(a), Some(b)) => a == b,
+        (None, None) => true,
+        _ => false,
+    }
+}
+
     /// Get the column name.
-    pub fn name(&self) -> &str {
-        self.name
+    pub fn name(&self) -> &String {
+        &self.name
     }
 
     /// Get the column type.
@@ -222,8 +419,8 @@ impl<'a> ColumnDefinition<'a> {
     }
 
     /// Whether the column is a primary key.
-    pub fn is_primary_key(&self) -> bool {
-        self.is_primary_key
+    pub fn primary_key(&self) -> bool {
+        self.primary_key
     }
 }
 
@@ -319,6 +516,14 @@ pub enum PgPermission {
     Trigger,
     All,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PgSequencePermission{
+    All,
+    Update,
+    Select,
+    Usage,
+}
 pub struct UserPermissions {
     pub table: String,
     pub user: String,
@@ -335,7 +540,7 @@ pub enum DataBaseError {
     /// Invalid condition in a query.
     InvalidCondition(String),
     /// Error when altering a table.
-    AlterTableError(String),
+    SchemaMismatchDetails(String),
     /// Error related to Tokio runtime.
     TokioError(String),
     /// Unknown column type returned from the database.
@@ -348,7 +553,7 @@ impl fmt::Display for DataBaseError {
         match self {
             DataBaseError::DataBaseError(err) => write!(f, "Database Error: {}", err),
             DataBaseError::NoConditionFound(msg) => write!(f, "No Condition Found: {}", msg),
-            DataBaseError::AlterTableError(msg) => write!(f, "Tried altering a table but got this error:\n{}", msg),
+            DataBaseError::SchemaMismatchDetails(msg) => write!(f, "conflicting columns:\n{}", msg),
             DataBaseError::InvalidCondition(msg) => write!(f, "Invalid Condition: {}", msg),
             DataBaseError::TokioError(msg) => write!(f, "Tokio Runtime Error: {}", msg),
             DataBaseError::UnknownColumnType(msg) => write!(f, "Could not resolve type returned from database: ({msg})"),
