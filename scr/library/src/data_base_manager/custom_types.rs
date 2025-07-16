@@ -1,13 +1,11 @@
-use std::fmt;
-use sqlx::Error;
 pub use sqlx::postgres::PgRow;
+use sqlx::Error;
+use std::fmt;
 
 use crate::data_base_manager::normalize_identifier;
 
-
-
 /// Macro to implement [`SQLReadable`] for a struct.
-/// 
+///
 /// # Example
 /// ```ignore
 /// impl_sql_readable!(User { id: i32, name: String, active: bool });
@@ -28,7 +26,7 @@ macro_rules! impl_sql_readable {
 }
 
 /// Macro to implement [`SQLformat`] for a struct.
-/// 
+///
 /// # Example
 /// ```ignore
 /// impl_sql_format!(User { id, name, active });
@@ -49,7 +47,7 @@ macro_rules! impl_sql_format {
 }
 
 /// A trait for constructing a struct from a database row.
-/// 
+///
 /// # Example
 /// ```
 /// use sqlx::postgres::PgRow;
@@ -77,7 +75,7 @@ pub trait SQLReadable: Sized {
 }
 
 /// Trait for formatting a struct as a vector of [`ToSql`] values for SQL insertion/updating.
-/// 
+///
 /// # Example
 /// ```
 /// use library::data_base_manager::SQLformat;
@@ -89,7 +87,9 @@ pub trait SQLReadable: Sized {
 /// }
 /// impl<'c> SQLformat<'c> for Test {
 ///     fn sqlformat(&'c self) -> Vec<ToSql<'c>> {
-///         vec![ToSql::i64(self.id), ToSql::Text(&self.value1), ToSql::Bool(self.value2)]
+///         vec![ToSql::i64(self.id),
+///         ToSql::Text(&self.value1),
+///         ToSql::Bool(self.value2)]
 ///     }
 /// }
 /// ```
@@ -133,16 +133,16 @@ impl ToSql<'_> {
 #[allow(non_camel_case_types)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PostgresType {
-    i32,      // INT/INTEGER
-    i64,      // BIGINT
-    i16,      // SMALLINT
-    f32,      // REAL
-    f64,      // DOUBLE PRECISION
-    bool,     // BOOLEAN
-    String,   // TEXT
-    i16Auto,  // SMALLSERIAL
-    i32Auto,  // SERIAL
-    i64Auto,  // BIGSERIAL 
+    i32,     // INT/INTEGER
+    i64,     // BIGINT
+    i16,     // SMALLINT
+    f32,     // REAL
+    f64,     // DOUBLE PRECISION
+    bool,    // BOOLEAN
+    String,  // TEXT
+    i16Auto, // SMALLSERIAL
+    i32Auto, // SERIAL
+    i64Auto, // BIGSERIAL
 }
 
 impl PostgresType {
@@ -188,8 +188,6 @@ impl PostgresType {
         }
     }
 }
-
-
 
 pub fn can_add_column_to_non_empty_table(col: &ColumnDefinition) -> bool {
     if !col.not_null {
@@ -249,7 +247,7 @@ pub struct ColumnDefinition {
 }
 
 impl<'a> ColumnDefinition {
- /// Create a new column definition.
+    /// Create a new column definition.
     ///
     /// If `primary_key` is true, `not_null` and `is_unique` are forced to `true`.
     /// If `col_type` is an auto-increment type (`i16Auto`, `i32Auto`, `i64Auto`),
@@ -275,14 +273,21 @@ impl<'a> ColumnDefinition {
     ///     None
     /// );
     /// ```
-    pub fn new(name: String, col_type: PostgresType, not_null: bool, primary_key: bool, is_unique: bool, default: Option<String>) -> Self {
-    let mut not_null = not_null;
+    pub fn new(
+        name: String,
+        col_type: PostgresType,
+        not_null: bool,
+        primary_key: bool,
+        is_unique: bool,
+        default: Option<String>,
+    ) -> Self {
+        let mut not_null = not_null;
         let mut unique = is_unique;
         let mut default = default;
 
         if primary_key {
-            not_null = true;    // Primary keys must be NOT NULL
-            unique = true;  // Primary keys are already UNIQUE
+            not_null = true; // Primary keys must be NOT NULL
+            unique = true; // Primary keys are already UNIQUE
         }
 
         let auto_increment = match col_type {
@@ -307,7 +312,7 @@ impl<'a> ColumnDefinition {
             primary_key,
             unique,
             default,
-            auto_increment
+            auto_increment,
         }
     }
 
@@ -335,14 +340,16 @@ impl<'a> ColumnDefinition {
     pub fn to_sql(&self, is_single_pk: bool) -> String {
         let mut sql = format!("{} {}", self.name, self.col_type.to_sql_type());
 
-        if self.primary_key { 
-            if is_single_pk{ sql.push_str(" PRIMARY KEY");}
-        }else{
+        if self.primary_key {
+            if is_single_pk {
+                sql.push_str(" PRIMARY KEY");
+            }
+        } else {
             if self.unique {
                 sql.push_str(" UNIQUE");
             }
             if self.not_null {
-            sql.push_str(" NOT NULL");
+                sql.push_str(" NOT NULL");
             }
         }
         if self.col_type != PostgresType::i16Auto
@@ -350,13 +357,13 @@ impl<'a> ColumnDefinition {
             && self.col_type != PostgresType::i64Auto
         {
             if let Some(ref default) = self.default {
-            sql.push_str(&format!(" DEFAULT {}", default));
+                sql.push_str(&format!(" DEFAULT {}", default));
             }
         }
         sql
     }
-    
-/// Compares two column definitions for logical schema equality.
+
+    /// Compares two column definitions for logical schema equality.
     ///
     /// This comparison accounts for:
     /// - Exact name match
@@ -385,23 +392,22 @@ impl<'a> ColumnDefinition {
     /// );
     /// assert!(a.are_same(&b)); // Same base type and both auto-increment
     /// ```
-pub fn are_same(&self, other: &ColumnDefinition) -> bool {
-    self.name == other.name &&
-    (self.col_type == other.col_type || (
-        self.auto_increment &&
-        other.auto_increment &&
-        self.col_type.base_type() == other.col_type.base_type()
-    )) &&
-    self.not_null == other.not_null &&
-    self.primary_key == other.primary_key &&
-    self.unique == other.unique &&
-    self.auto_increment == other.auto_increment &&
-    match (&self.default, &other.default) {
-        (Some(a), Some(b)) => a == b,
-        (None, None) => true,
-        _ => false,
+    pub fn are_same(&self, other: &ColumnDefinition) -> bool {
+        self.name == other.name
+            && (self.col_type == other.col_type
+                || (self.auto_increment
+                    && other.auto_increment
+                    && self.col_type.base_type() == other.col_type.base_type()))
+            && self.not_null == other.not_null
+            && self.primary_key == other.primary_key
+            && self.unique == other.unique
+            && self.auto_increment == other.auto_increment
+            && match (&self.default, &other.default) {
+                (Some(a), Some(b)) => a == b,
+                (None, None) => true,
+                _ => false,
+            }
     }
-}
 
     /// Get the column name.
     pub fn name(&self) -> &String {
@@ -431,7 +437,7 @@ where
 {
     T::to_sql(value)
 }
-
+//TODO maby in sed of to_sql_variant(value) make it that value.to_sql
 /// Trait for converting a value to a [`ToSql`] variant.
 pub trait ToSqlConvert<'a> {
     /// Convert the value to a [`ToSql`] variant.
@@ -518,7 +524,7 @@ pub enum PgPermission {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PgSequencePermission{
+pub enum PgSequencePermission {
     All,
     Update,
     Select,
@@ -556,10 +562,12 @@ impl fmt::Display for DataBaseError {
             DataBaseError::SchemaMismatchDetails(msg) => write!(f, "conflicting columns:\n{}", msg),
             DataBaseError::InvalidCondition(msg) => write!(f, "Invalid Condition: {}", msg),
             DataBaseError::TokioError(msg) => write!(f, "Tokio Runtime Error: {}", msg),
-            DataBaseError::UnknownColumnType(msg) => write!(f, "Could not resolve type returned from database: ({msg})"),
+            DataBaseError::UnknownColumnType(msg) => {
+                write!(f, "Could not resolve type returned from database: ({msg})")
+            }
             DataBaseError::UnknownPermision(msg) => write!(f, "Unknown permission error: {}", msg),
+        }
     }
-}
 }
 
 impl std::error::Error for DataBaseError {}

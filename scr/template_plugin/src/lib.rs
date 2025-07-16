@@ -1,4 +1,4 @@
-use std::{sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex}, thread, time::{Duration, SystemTime}};
+use std::{sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex}, thread, time::{Duration, Instant}};
 
 use error_handeler::{ErrorOperation, RGB};
 use library::{error_handeler::Printer, *};
@@ -25,39 +25,76 @@ pub fn start(mut printer: Printer, stopflag: Arc<AtomicBool>, status: Arc<Mutex<
     })?;
 
     loop {
-        let start_of_loop = SystemTime::now();
-        context.update_timing()?;
+        let start = Instant::now();
+        context.accumulated += start.duration_since(context.last_loop);
+        context.last_loop = start;
+
         if context.stopflag.load(Ordering::Relaxed) {
             break;
         }
-        if context.time_passed >= context.update_rate {
-            context.time_passed = 0;
-            if let Err(_) = printer.send(ErrorOperation::NonErrorPrint(APP_NAME.to_string(), "test plugin action 'print'".to_string(), RGB::from_hex(0x951fcc)), APP_NAME) {
-                return Err(Box::new(ErrorThreadDownError::new(APP_NAME, "test plugin action 'print'")));
+
+        // reget timing/settings data and the error hendeling
+        if let Err(err) = context.update_timing() {
+            if let Err(_) = printer.send(
+                ErrorOperation::PrintError(
+                    APP_NAME.to_string(),
+                    format!("error while updating timing, retrying next cycle\n{err}"),
+                    RGB::ERROR()
+                ),
+                APP_NAME,
+            ) {
+                return Err(Box::new(ErrorThreadDownError::new(
+                    APP_NAME,
+                    "error while updating timing, retrying next cycle",
+                )));
             }
-            context.update_status()?
-        } else {
-            context.time_passed += context.step_rate;
         }
 
-        let endloop = match start_of_loop.elapsed() {
-            Ok(duration) => duration,
-            Err(error) => {
-                if let Err(_) = printer.send(ErrorOperation::PrintError(APP_NAME.to_string(), format!("error while getting elapsed time: {}", error), RGB::ERROR()), APP_NAME) {
-                    return Err(Box::new(ErrorThreadDownError::new(APP_NAME, &format!("error while getting elapsed time: {}", error))));
-                }
-                Duration::ZERO
-            },
-        };
+        let update_interval = Duration::from_secs_f64(context.update_rate as f64);
 
-        if let Some(sleep_duration) = Duration::from_secs(context.step_rate as u64).checked_sub(endloop) {
-            thread::sleep(sleep_duration);
-        } else {
-            if let Err(_) = printer.send(ErrorOperation::PrintError(APP_NAME.to_string(), "loop took too long".to_string(), RGB::WARNING()), APP_NAME) {
-                return Err(Box::new(ErrorThreadDownError::new(APP_NAME, "loop took too long")));
-            }
-            context.time_passed += (endloop.saturating_sub(Duration::from_secs(context.step_rate as u64))).as_secs() as usize;
+        // Check how much time passed since last update
+        if context.accumulated >= update_interval {
+            // do work
+            printer.named_print(APP_NAME, "test print", RGB::BLUE());
+            context.update_status()?;
+
+            // reset timer
+            context.accumulated -= update_interval;
+            
         }
+
+        let elapsed = start.elapsed();
+
+       let margin = Duration::from_millis(2); // small safety net to avoid early wakeup
+
+    let max_sleep = Duration::from_secs_f64(context.step_rate as f64)
+    .checked_sub(elapsed)
+    .unwrap_or(Duration::ZERO);
+
+    // Instead of subtracting a margin, we add it:
+    let biased_time_until_update = update_interval
+    .checked_sub(context.accumulated)
+    .map(|d| d.saturating_add(margin)) // safe add without overflow
+    .unwrap_or(Duration::ZERO);
+
+    let sleep_duration = std::cmp::min(max_sleep, biased_time_until_update);
+
+        if sleep_duration == Duration::ZERO {
+            if let Err(_) = printer.send(
+                ErrorOperation::PrintError(
+                    APP_NAME.to_string(),
+                    "The loop took too long, skipping sleep".to_string(),
+                    RGB::ERROR()
+                ),
+                APP_NAME,
+            ) {
+                return Err(Box::new(ErrorThreadDownError::new(
+                    APP_NAME,
+                    "The loop took too long, skipping sleep",
+                )));
+            }
+        }
+        thread::sleep(sleep_duration);
     }
     Ok(())
 }

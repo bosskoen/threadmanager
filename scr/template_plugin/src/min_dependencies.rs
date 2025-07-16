@@ -1,4 +1,4 @@
-use std::{fmt, fs, sync::{atomic::AtomicBool, Arc, Mutex}, time::SystemTime};
+use std::{fmt, fs, sync::{atomic::AtomicBool, Arc, Mutex}, time::{Duration, Instant, SystemTime}};
 
 use library::{format_duration, impl_status, toml, DateTime, Local, Status};
 use serde::Deserialize;
@@ -9,8 +9,10 @@ pub struct Context {
     settings_path: String,
     pub update_rate: usize,
     pub step_rate: usize,
-    pub time_passed: usize,
     last_time_setting_written: SystemTime,
+
+    pub accumulated: Duration,
+    pub last_loop: Instant
 }
 
 impl Context {
@@ -19,7 +21,7 @@ impl Context {
 
         initialize_status(&status)?;
 
-        Ok(Context { stopflag, status, settings_path, update_rate: settings.update_rate, step_rate: settings.step_rate, time_passed: 0, last_time_setting_written })
+        Ok(Context { stopflag, status, settings_path, update_rate: settings.update_rate, step_rate: settings.step_rate, last_time_setting_written, accumulated: Duration::ZERO, last_loop: Instant::now()})
     }
 
     pub fn update_timing(&mut self) -> Result<(), PluginError> {

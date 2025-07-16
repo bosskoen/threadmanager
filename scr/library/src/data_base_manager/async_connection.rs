@@ -98,7 +98,7 @@ impl AsyncConnection {
     ///                     Test{id:5,value1: "cake".to_string(), value2: true}];
     ///     let mut conn = AsyncConnection::new("myuser", "securepassword", "localhost", "mydatabase").await.unwrap();
     ///
-    ///     conn.write_database(data ,"test", "value2, id, value1").await;
+    ///     conn.write_database(&data ,"test", "value2, id, value1").await;
     ///
     /// });
     /// ```
@@ -106,7 +106,7 @@ impl AsyncConnection {
     /// needs to move the data into the function, and data need to be of the same type
     pub async fn write_database<T>(
         &self,
-        data: Vec<T>,
+        data: &[T],
         table_name: &str,
         table_format: &str,
     ) -> Result<(), DataBaseError>

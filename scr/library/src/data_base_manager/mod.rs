@@ -4,7 +4,7 @@ mod async_connection;
 pub use async_connection::AsyncConnection;
 pub use sqlx;
 
-use sqlx::{Decode, Error, PgPool, Postgres, Row, Type};
+use sqlx::{Decode, PgPool, Postgres, Row, Type};
 use tokio::runtime::Runtime;
 
 pub struct SyncConnection {
@@ -89,11 +89,11 @@ impl SyncConnection {
     ///                     Test{id:5,value1: "cake".to_string(), value2: true}];
     ///     let mut conn = SyncConnection::new("myuser", "securepassword", "localhost", "mydatabase").unwrap();
     ///
-    ///     conn.write_database(data ,"test", "value2, id, value1");
+    ///     conn.write_database(&data ,"test", "value2, id, value1");
     /// ```
     pub fn write_database<T>(
         &mut self,
-        data: Vec<T>,
+        data: &[T],
         table_name: &str,
         columns: &str,
     ) -> Result<(), DataBaseError>
@@ -549,8 +549,8 @@ impl SyncConnection {
 pub fn get_colum_value<T: for<'r> Decode<'r, Postgres> + Type<Postgres>>(
     row: &PgRow,
     colum_name: &str,
-) -> Result<T, Error> {
-    row.try_get::<T, &str>(&normalize_identifier(colum_name))
+) -> Result<T, DataBaseError> {
+    Ok(row.try_get::<T, &str>(&normalize_identifier(colum_name))?)
 }
 
 fn normalize_identifier(s: &str) -> String {
@@ -640,7 +640,7 @@ mod tests {
             },
         ];
 
-        conn.write_database(data, table, "value2, id, value1")?;
+        conn.write_database(&data, table, "value2, id, value1")?;
         let (_, rt) = conn.get_inner();
 
         let rows = rt.block_on(
@@ -677,7 +677,7 @@ mod tests {
 
         let mut conn = SyncConnection::from_pool(pool.clone(), rt)?;
         let data: Vec<TestItem> = vec![];
-        conn.write_database(data, table, "value2, id, value1")?;
+        conn.write_database(&data, table, "value2, id, value1")?;
 
         let (_, rt) = conn.get_inner();
 
@@ -717,7 +717,7 @@ mod tests {
         ];
 
         let mut conn = SyncConnection::from_pool(pool.clone(), rt)?;
-        let result = conn.write_database(data, table, "value2, id, value1");
+        let result = conn.write_database(&data, table, "value2, id, value1");
         assert!(result.is_err());
 
         let (_, rt) = conn.get_inner();

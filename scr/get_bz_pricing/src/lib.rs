@@ -16,7 +16,7 @@ use std::{
         Arc, Mutex,
     },
     thread,
-    time::{Duration, Instant},
+    time::{Duration, Instant}, vec,
 };
 use type_dependecies::{Context, PricingError};
 
@@ -74,8 +74,10 @@ pub fn start(
             }
         }
 
+        let update_interval = Duration::from_secs_f64(context.update_rate as f64);
+
         // Check how much time passed since last update
-        if context.accumulated >= Duration::from_secs(context.update_rate as u64) {
+        if context.accumulated >= update_interval {
             get_bz_data(&mut printer, &mut context).map_err(|err| match err {
                 PricingError::ErrorThreadDown(messige) => {
                     Box::new(ErrorThreadDownError::new(APP_NAME, &messige))
@@ -103,15 +105,25 @@ pub fn start(
                     Box::new(err) as Box<dyn std::error::Error>
                 }
             })?;
-            context.accumulated -= Duration::from_secs(context.update_rate as u64);
+            context.accumulated -= update_interval;
             // reset timer
         }
 
         let elapsed = start.elapsed();
 
-        let sleep_duration = Duration::from_secs(context.step_rate as u64)
-            .checked_sub(elapsed)
-            .unwrap_or(Duration::ZERO);
+        let margin = Duration::from_millis(2); // small safety net to avoid early wakeup
+
+    let max_sleep = Duration::from_secs_f64(context.step_rate as f64)
+    .checked_sub(elapsed)
+    .unwrap_or(Duration::ZERO);
+
+    // Instead of subtracting a margin, we add it:
+    let biased_time_until_update = update_interval
+    .checked_sub(context.accumulated)
+    .map(|d| d.saturating_add(margin)) // safe add without overflow
+    .unwrap_or(Duration::ZERO);
+
+    let sleep_duration = std::cmp::min(max_sleep, biased_time_until_update);
 
         if sleep_duration == Duration::ZERO {
             if let Err(_) = printer.send(
@@ -495,10 +507,10 @@ fn write_database(
                 }
             }
         })
-        .collect();
+        .collect::<Vec<BazaData>>();
 
     context.conn.write_database(
-        prices_data,
+        &prices_data,
         &context.data_table_name,
         "ID, time_Stamp, sell_Price, buy_Price, sell_Volume, sell_Moving_Week, buy_Volume, buy_Moving_Week",
     )?;
