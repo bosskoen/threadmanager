@@ -11,10 +11,10 @@ use library::{
     data_base_manager::{DataBaseError, SyncConnection},
     error_handeler::Printer,
     format_duration,
-    web_service_adapter::WebServiceError,
+    web_service_adapter::{WebServiceError, get_data_plus_size},
 };
 
-use crate::{get_current_mayer, parsing::*};
+use crate::{get_current_mayer, parsing::*, unix_to_sys};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
@@ -65,7 +65,7 @@ impl Context {
         let settings = Settings::get(&settings_path)?;
 
         let user = DataBaseLogin::get(&settings.user_login_path)?;
-        let database_user = SyncConnection::new(
+        let mut database_user = SyncConnection::new(
             &user.user_name,
             &user.password,
             &user.host,
@@ -79,8 +79,39 @@ impl Context {
             &printer,
         )?;
 
-        let (last_mayor, mayor_name) = get_current_mayer(&database_user, &settings.table_name)?;
-        start_status(&status, last_mayor.into(), mayor_name.clone())?;
+        let db_option = get_current_mayer(&database_user, &settings.table_name)?;
+        let data = get_data_plus_size(&settings.url, 3, Duration::from_secs(3))?;
+        let data_used = data.received_bytes + data.sent_bytes;
+        let mayor_api_data = MayorData::get(&data.text)?;
+
+        let mayor_name;
+        let last_mayor;
+
+        if let Some(db_data) = db_option {
+            if db_data.year < mayor_api_data.year {
+                //new mayor
+                database_user.write_database(
+                    &[mayor_api_data.clone()],
+                    &settings.table_name,
+                    "time, mayor, year",
+                )?;
+                mayor_name = mayor_api_data.name;
+                last_mayor = unix_to_sys(mayor_api_data.time);
+            } else {
+                mayor_name = mayor_api_data.name;
+                last_mayor = unix_to_sys(db_data.time);
+            }
+        } else {
+            database_user.write_database(
+                &[mayor_api_data.clone()],
+                &settings.table_name,
+                "time, mayor, year",
+            )?;
+            mayor_name = mayor_api_data.name;
+            last_mayor = unix_to_sys(mayor_api_data.time);
+        }
+
+        start_status(&status, last_mayor.into(), mayor_name.clone(), data_used as u64)?;
 
         Ok(Self {
             accumulated: Duration::ZERO,
@@ -113,7 +144,9 @@ impl Context {
             let status = if let Some(x) = (**inner).as_any_mut().downcast_mut::<MayorStatus>() {
                 x
             } else {
-                return Err(MayorError::StatusError("downcast to MayorStatus".to_string()));
+                return Err(MayorError::StatusError(
+                    "downcast to MayorStatus".to_string(),
+                ));
             };
 
             status.data_used += data_used as u64;
@@ -155,13 +188,14 @@ fn start_status(
     status: &Arc<Mutex<Box<dyn Status>>>,
     last_mayor: DateTime<Local>,
     mayor_name: String,
+    data_used: u64
 ) -> Result<(), MayorError> {
     let new_status = MayorStatus {
         last_mayor,
         mayor_name,
         mayor_caghes: 0,
         mode: Mode::CatchUp,
-        data_used: 0,
+        data_used,
         start_time: Local::now(),
     };
 
@@ -190,7 +224,7 @@ impl Status for MayorStatus {
             "Last mayor \"{}\" took offes at {}, {} ago\nmayor tracked: {}\ncurrent mode: {}\ndata used: {}\n plugin is running sinds: {}, uptime: {} ",
             self.mayor_name,
             self.last_mayor.format("%Y %m-%d; %H:%M:%S"),
-            format_duration(self.last_mayor, now),
+            int_dur_from(self.last_mayor, now),
             self.mayor_caghes,
             self.mode,
             format_size(self.data_used, BINARY),
@@ -202,6 +236,20 @@ impl Status for MayorStatus {
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
     }
+}
+
+fn int_dur_from(start: DateTime<Local>, end: DateTime<Local>) -> String {
+    let duration = end - start;
+
+    let total_days = duration.num_days();
+    let hours = duration.num_hours() % 24;
+    let minutes = duration.num_minutes() % 60;
+    let seconds = duration.num_seconds() % 60;
+
+    format!(
+        "{} days, {:02}:{:02}:{:02}",
+        total_days, hours, minutes, seconds
+    )
 }
 
 #[derive(Debug)]
@@ -228,7 +276,9 @@ impl Display for MayorError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             MayorError::ParsingError(msg) => write!(f, "{msg}"),
-            MayorError::DataBaseError(data_base_error) => write!(f, "Database Error: {data_base_error}"),
+            MayorError::DataBaseError(data_base_error) => {
+                write!(f, "Database Error: {data_base_error}")
+            }
             MayorError::StatusError(msg) => write!(f, "Status Error: failed to: {msg}"),
             MayorError::WebError(web_service_error) => write!(f, "Web Error: {web_service_error}"),
             MayorError::FileReadError(msg) => write!(f, "File Error: failed to read {msg}"),

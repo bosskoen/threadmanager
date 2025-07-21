@@ -239,6 +239,7 @@ fn validate_data_base(
         ),
         ColumnDefinition::new("ID".to_string(), PT::i16Auto, true, true, true, None),
         ColumnDefinition::new("Name".to_string(), PT::String, false, false, false, None),
+        ColumnDefinition::new("in_bz".to_string(), PT::bool, false, false, false, None)
     ];
 
     if let Some(msg) = owned_conn

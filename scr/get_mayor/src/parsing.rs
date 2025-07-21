@@ -50,28 +50,37 @@ impl Settings {
         Ok(config)
     }
 }
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct MayorData{
     pub time: i64,
     pub name: String,
+    pub year: i32
 }
 impl MayorData {
     pub fn get(json: &String)-> Result<Self, MayorError>{
         #[derive(Deserialize)]
         #[allow(non_camel_case_types)]
-        struct name{ name: String}
+        struct name{ name: String, election: election}
+
+        #[derive(Deserialize)]
+        #[allow(non_camel_case_types)]
+        struct election{
+            year: i32
+        }
 
         #[derive(Deserialize)]
         #[allow(non_camel_case_types, non_snake_case)]
         struct inner{lastUpdated: i64, mayor: name}
 
         let x = serde_json::from_str::<inner>(&json).map_err(|_| MayorError::ParsingError("failed to parse json".to_string()))?;
-        Ok(Self { time: x.lastUpdated, name: x.mayor.name })
+        Ok(Self { time: x.lastUpdated, name: x.mayor.name, year: x.mayor.election.year+1 })
     }
+
+    
 }
 
 impl<'c> SQLformat<'c> for MayorData{
     fn sqlformat(&'c self) -> Vec<library::data_base_manager::ToSql<'c>> {
-        vec![to_sql_variant(&self.time), to_sql_variant(&self.name)]
+        vec![to_sql_variant(&self.time), to_sql_variant(&self.name), to_sql_variant(&self.year)]
     }
 }

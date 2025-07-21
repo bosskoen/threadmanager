@@ -1,15 +1,20 @@
 use std::{
     sync::{
-        atomic::{AtomicBool, Ordering}, Arc, Mutex
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
     },
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use library::{
+    ErrorThreadDownError, Status,
     data_base_manager::{
-        get_colum_value, sqlx, ColumnDefinition, DataBaseError, PgPermission, PostgresType, SyncConnection
-    }, error_handeler::{ErrorOperation, Printer, RGB}, web_service_adapter::get_data_plus_size, ErrorThreadDownError, Status
+        ColumnDefinition, DataBaseError, PgPermission, PostgresType, SyncConnection,
+        get_colum_value, sqlx,
+    },
+    error_handeler::{ErrorOperation, Printer, RGB},
+    web_service_adapter::get_data_plus_size,
 };
 
 use crate::{
@@ -17,13 +22,13 @@ use crate::{
     types::{Context, MayorError, Mode},
 };
 
-const APP_NAME: &str = "";
+const APP_NAME: &str = "mayor_tracker";
 
 mod parsing;
 mod types;
 
 //MAIN FUNC
-#[unsafe(no_mangle)]
+#[no_mangle]
 pub fn start(
     printer: Printer,
     stopflag: Arc<AtomicBool>,
@@ -64,8 +69,12 @@ pub fn start(
                 update_interval = Duration::from_secs_f64(context.update_rate as f64);
                 if context.accumulated >= update_interval {
                     // do work
-                    if let Err(e) = get_mayor(&mut context){
-                        printer.named_print(APP_NAME, &format!("got error: {e}\n retrying next cycle"), RGB::ALERT());
+                    if let Err(e) = get_mayor(&mut context) {
+                        printer.named_print(
+                            APP_NAME,
+                            &format!("got error: {e}\n retrying next cycle"),
+                            RGB::ALERT(),
+                        );
                     }
 
                     // reset timer
@@ -79,7 +88,9 @@ pub fn start(
                     // do work
 
                     context.mode = Mode::Polling;
-                    context.update_status(None, 0).map_err(| e| Box::new(e) as Box<dyn std::error::Error>)?;
+                    context
+                        .update_status(None, 0)
+                        .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
                     // reset timer
                     context.accumulated -= update_interval;
                 }
@@ -131,51 +142,62 @@ fn get_mayor(context: &mut Context) -> Result<(), MayorError> {
         set mode to wait
     update status
     */
-    
+
     let data = get_data_plus_size(&context.url, 3, Duration::from_secs(3))?;
 
     let data_used = data.received_bytes + data.sent_bytes;
     let mayor_data = MayorData::get(&data.text)?;
+
     let mut name = None;
-    if context.mayor_name != mayor_data.name{
-        context.database_user.write_database(&[mayor_data.clone()], &context.table_name,"time, mayor" )?;
+    if context.mayor_name != mayor_data.name {
+        context.database_user.write_database(
+            &[mayor_data.clone()],
+            &context.table_name,
+            "time, mayor, year",
+        )?;
         context.mayor_name = mayor_data.name.clone();
         name = Some((unix_to_sys(mayor_data.time).into(), mayor_data.name));
-        context.mode = Mode::Waiting;
+        context.mode = Mode::Waiting
     }
     context.update_status(name, data_used)?;
 
     Ok(())
 }
 
-fn unix_to_sys(unix: i64)->SystemTime{
+fn unix_to_sys(unix: i64) -> SystemTime {
     UNIX_EPOCH + Duration::from_millis(unix as u64)
 }
 
 pub fn get_current_mayer(
     user: &SyncConnection,
     table_name: &String,
-) -> Result<(SystemTime, String), MayorError> {
+) -> Result<Option<MayorData>, MayorError> {
     let (pool, rt) = user.get_inner();
-    let (name, time) = {
-        let row = rt
-            .block_on(
-                sqlx::query(&format!(
-                    "SELECT mayor, time FROM {} ORDER BY time DESC LIMIT 1",
-                    table_name
-                ))
-                .fetch_one(&pool),
-            )
-            .map_err(|e| DataBaseError::from(e))?;
-        (
-            get_colum_value::<String>(&row, "mayor")?,
-            get_colum_value::<i64>(&row, "time")?,
-        )
+
+    let opt_row = rt.block_on(
+        sqlx::query(&format!(
+            "SELECT mayor, time, year FROM {} ORDER BY time DESC LIMIT 1",
+            table_name
+        ))
+        .fetch_one(&pool),
+    );
+
+    let option = match opt_row {
+        Ok(row) => Some(MayorData{
+            name: get_colum_value::<String>(&row, "mayor")?,
+            time: get_colum_value::<i64>(&row, "time")?,
+            year: get_colum_value::<i32>(&row, "year")?
+        }
+        ),
+        Err(e) => match e {
+            sqlx::Error::RowNotFound => None,
+            _ => Err(MayorError::from(DataBaseError::from(e)))?,
+        },
     };
 
-    let system_time = unix_to_sys(time);
-    Ok((system_time, name))
+    Ok(option)
 }
+
 pub fn enshure_database(
     database_owner: DataBaseLogin,
     table_name: &str,
@@ -203,6 +225,14 @@ pub fn enshure_database(
             PostgresType::i64,
             true,
             true,
+            true,
+            None,
+        ),
+        ColumnDefinition::new(
+            "year".to_string(),
+            PostgresType::i32,
+            true,
+            false,
             true,
             None,
         ),

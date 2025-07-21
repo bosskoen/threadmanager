@@ -502,7 +502,7 @@ fn thread_logic(
                     Ok(_) => {
                         printer.print(
                             &format!("{} has stopped gracefully\nlast status:", &name),
-                            RGB::INFO(),
+                            RGB::NOTICE(),
                         );
                         printstatus(&status, &printer);
                     }
