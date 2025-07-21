@@ -28,7 +28,7 @@ mod parsing;
 mod types;
 
 //MAIN FUNC
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub fn start(
     printer: Printer,
     stopflag: Arc<AtomicBool>,
@@ -36,6 +36,23 @@ pub fn start(
     settings_path: String,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut context = Context::from(stopflag, status, settings_path, &printer)?;
+
+     printer
+        .send(
+            library::error_handeler::ErrorOperation::ChangeLed(
+                RGB::from_hex(0x19eb5d),
+                false,
+                library::error_handeler::LedNumber::LED3,
+            ),
+            APP_NAME,
+        )
+        .map_err(|_| {
+            Box::new(ErrorThreadDownError::new(
+                APP_NAME,
+                "error while turning on led",
+            ))
+        })?;
+    //TODO color
 
     loop {
         let start = Instant::now();
@@ -130,6 +147,23 @@ pub fn start(
         }
         thread::sleep(sleep_duration);
     }
+
+    printer
+        .send(
+            library::error_handeler::ErrorOperation::ChangeLed(
+                RGB::BLACK(),
+                false,
+                library::error_handeler::LedNumber::LED2,
+            ),
+            APP_NAME,
+        )
+        .map_err(|_| {
+            Box::new(ErrorThreadDownError::new(
+                APP_NAME,
+                &format!("error while turning of led"),
+            ))
+        })?;
+
     Ok(())
 }
 

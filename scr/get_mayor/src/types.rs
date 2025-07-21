@@ -221,7 +221,7 @@ impl Status for MayorStatus {
     fn format(&self) -> String {
         let now = Local::now();
         format!(
-            "Last mayor \"{}\" took offes at {}, {} ago\nmayor tracked: {}\ncurrent mode: {}\ndata used: {}\n plugin is running sinds: {}, uptime: {} ",
+            "Last mayor \"{}\" took offes at {}, {} ago\nmayor tracked: {}\ncurrent mode: {}\ndata used: {}\nplugin is running sinds: {}, uptime: {} ",
             self.mayor_name,
             self.last_mayor.format("%Y %m-%d; %H:%M:%S"),
             int_dur_from(self.last_mayor, now),

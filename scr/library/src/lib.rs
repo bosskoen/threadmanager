@@ -8,7 +8,7 @@ pub use libc;
 use std::any::Any;
 
 pub use rustyline;
-pub use chrono::{DateTime, Local, NaiveDateTime};
+pub use chrono::{DateTime, Local, NaiveDateTime, NaiveTime, NaiveDate, TimeZone, TimeDelta};
 pub use toml;
 
 #[macro_use]

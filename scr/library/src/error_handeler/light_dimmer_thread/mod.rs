@@ -61,6 +61,27 @@ fn init_status(status: &Arc<Mutex<Box<dyn Status>>>, printer: &mut Printer) {
     }
 }
 
+fn update_status(status: &Arc<Mutex<Box<dyn Status>>>, brightnes: u8, printer: &mut Printer) {
+    if let Ok(mut stat) = status.lock() {
+        if let Some(status) = (**stat).as_any_mut().downcast_mut::<LightDimmerStatus>() {
+            status.current_brightness = brightnes;
+        } else {
+            printer.print_error(
+                PLUGIN_NAME,
+                "failed to cast LightDimmerStatus",
+                RGB::CRITICAL_ERROR(),
+            );
+
+        }
+    } else {
+        printer.print_error(
+            PLUGIN_NAME,
+            "failed to lock the status",
+            RGB::CRITICAL_ERROR(),
+        );
+    }
+}
+
 pub fn start_light_dim(
     mut printer: Printer,
     stopflag: Arc<AtomicBool>,
@@ -76,6 +97,7 @@ pub fn start_light_dim(
             break;
         }
         if start_of_loop.hour() >= TIME_TO_DIM && last_updated.hour() < TIME_TO_DIM {
+            update_status(&status, LED_DAY_BRIGHTNESS, &mut printer);
             if let Err(_) = printer.send(
                 ErrorOperation::CangeBrighness(LED_NIGHT_BRIGHTNESS, super::LedNumber::ALL),
                 PLUGIN_NAME,
@@ -88,6 +110,7 @@ pub fn start_light_dim(
             }
         } else if start_of_loop.hour() >= TIME_TO_BRIGHTEN && last_updated.hour() < TIME_TO_BRIGHTEN
         {
+            update_status(&status, LED_DAY_BRIGHTNESS, &mut printer);
             if let Err(_) = printer.send(
                 ErrorOperation::CangeBrighness(LED_DAY_BRIGHTNESS, super::LedNumber::ALL),
                 PLUGIN_NAME,
