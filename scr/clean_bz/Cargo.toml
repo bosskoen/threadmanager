@@ -3,6 +3,9 @@ name = "clean_bz"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+crate-type = ["cdylib"]
+
 [dependencies]
 library = {path = "../library"}
 serde = {version = "1.0.219", features = ["derive"]}

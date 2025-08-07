@@ -199,7 +199,7 @@ fn main() -> ExitCode {
             }
             Err(ReadlineError::Eof) => {
                 printer.print("CTRL-D pressed, exiting.\n", RGB::WHITE());
-                break; ////
+                break; ////TODO difrent
             }
             Err(err) => {
                 printer.print_error("main", &format!("Error: {:?}", err), RGB::ERROR());
