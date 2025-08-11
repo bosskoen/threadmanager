@@ -10,13 +10,14 @@ use library::{
 use parsing::BzData;
 use parsing::DataBaseLogin;
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
     },
     thread,
-    time::{Duration, Instant}, vec,
+    time::{Duration, Instant},
+    vec,
 };
 use type_dependecies::{Context, PricingError};
 
@@ -113,17 +114,17 @@ pub fn start(
 
         let margin = Duration::from_millis(2); // small safety net to avoid early wakeup
 
-    let max_sleep = Duration::from_secs_f64(context.step_rate as f64)
-    .checked_sub(elapsed)
-    .unwrap_or(Duration::ZERO);
+        let max_sleep = Duration::from_secs_f64(context.step_rate as f64)
+            .checked_sub(elapsed)
+            .unwrap_or(Duration::ZERO);
 
-    // Instead of subtracting a margin, we add it:
-    let biased_time_until_update = update_interval
-    .checked_sub(context.accumulated)
-    .map(|d| d.saturating_add(margin)) // safe add without overflow
-    .unwrap_or(Duration::ZERO);
+        // Instead of subtracting a margin, we add it:
+        let biased_time_until_update = update_interval
+            .checked_sub(context.accumulated)
+            .map(|d| d.saturating_add(margin)) // safe add without overflow
+            .unwrap_or(Duration::ZERO);
 
-    let sleep_duration = std::cmp::min(max_sleep, biased_time_until_update);
+        let sleep_duration = std::cmp::min(max_sleep, biased_time_until_update);
 
         if sleep_duration == Duration::ZERO {
             if let Err(_) = printer.send(
@@ -221,7 +222,6 @@ fn validate_data_base(
         printer.named_print(APP_NAME, &msg, RGB::TRACE());
     }
 
-
     //CREATE TABLE [name]( //sqlite
     //    Hypixel_ID TEXT NOT NULL UNIQUE,
     //    ID INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -239,7 +239,7 @@ fn validate_data_base(
         ),
         ColumnDefinition::new("ID".to_string(), PT::i16Auto, true, true, true, None),
         ColumnDefinition::new("Name".to_string(), PT::String, false, false, false, None),
-        ColumnDefinition::new("in_bz".to_string(), PT::bool, false, false, false, None)
+        ColumnDefinition::new("in_bz".to_string(), PT::bool, false, false, false, None),
     ];
 
     if let Some(msg) = owned_conn
@@ -253,7 +253,6 @@ fn validate_data_base(
     {
         printer.named_print(APP_NAME, &msg, RGB::TRACE());
     }
-
 
     owned_conn.grant_permission(normal_user, table_name, &[PgPermission::Insert])?;
     owned_conn.grant_permission(
@@ -396,8 +395,10 @@ fn update_index_database(
         .into_iter()
         .collect();
 
-    let hypixel_ids: Vec<Name> = hypixel_ids.into_iter().filter(| n| !existing_keys.contains(&n.name)).collect();
-
+    let hypixel_ids: Vec<Name> = hypixel_ids
+        .into_iter()
+        .filter(|n| !existing_keys.contains(&n.name))
+        .collect();
 
     if context
         .conn
@@ -452,63 +453,74 @@ fn write_database(
             ]
         }
     }
-    struct Id {
+    struct Ids {
+        hyp_id: String,
         id: i16,
     }
-    impl SQLReadable for Id {
+    impl SQLReadable for Ids {
         fn from_row(row: &PgRow) -> Result<Self, DataBaseError> {
             let id = get_colum_value::<i16>(&row, "ID")?;
-            Ok(Id { id })
+            let hyp_id = get_colum_value::<String>(&row, "Hypixel_ID")?;
+            Ok(Self { hyp_id, id })
         }
     }
 
+    let list_hyp_id = json_data
+        .products
+        .values()
+        .map(|product| format!("'{}'", product.product_id.replace("'", "''")))
+        .collect::<Vec<_>>()
+        .join(",");
+
+    let rows: HashMap<String, i16> = context
+        .conn
+        .read_database::<Ids>(
+            &context.lookup_table_name,
+            "ID, Hypixel_ID",
+            &format!("WHERE Hypixel_ID IN ({})", list_hyp_id),
+        )?
+        .into_iter()
+        .map(|ids| (ids.hyp_id, ids.id))
+        .collect();
+
+    let time = json_data.last_updated as i64;
+
     let mut error_send_failed = false;
     let mut error_message: Vec<String> = Vec::new();
-    let time = json_data.last_updated as i64;
-    let prices_data = json_data
+
+    let prices_data: Vec<BazaData> = json_data
         .products
         .into_values()
-        .filter_map(|value| {
-            match context.conn.read_database::<Id>(
-                &context.lookup_table_name,
-                "ID",
-                &format!("WHERE Hypixel_ID = '{}'", value.product_id),
-            ) {
-                Ok(id) => Some(BazaData {
-                    id: id[0].id,
-                    time_stamp: time,
-                    sell_price: value.quick_status.sellPrice,
-                    sell_volme: value.quick_status.sellVolume,
-                    buy_moving_week: value.quick_status.buyMovingWeek,
-                    buy_volme: value.quick_status.buyVolume,
-                    sell_moving_week: value.quick_status.sellMovingWeek,
-                    buy_price: value.quick_status.buyPrice,
-                }),
-                Err(e) => {
-                    if let Err(_) = printer.send(
-                        ErrorOperation::PrintAndChangeLedError(
-                            APP_NAME.to_string(),
-                            format!(
-                                "couldn't read product id \"{}\" from database\nError: {}",
-                                value.product_id, e
-                            ),
-                            RGB::ERROR(),
-                            RGB::ERROR(),
-                            error_handeler::LedNumber::LED2,
-                        ),
-                        APP_NAME,
-                    ) {
-                        error_send_failed = true;
-                        error_message.push(format!(
-                            "couldn't read product id \"{}\" from database\nError: {}",
-                            value.product_id, e
-                        ));
-                    }
-                    None
+        .filter_map(|value| match rows.get(&value.product_id) {
+            Some(id) => Some(BazaData {
+                id: *id,
+                time_stamp: time,
+                sell_price: value.quick_status.sellPrice,
+                sell_volme: value.quick_status.sellVolume,
+                buy_moving_week: value.quick_status.buyMovingWeek,
+                buy_volme: value.quick_status.buyVolume,
+                sell_moving_week: value.quick_status.sellMovingWeek,
+                buy_price: value.quick_status.buyPrice,
+            }),
+            None => {
+                let err_str = format!("couldn't read product id \"{}\" from database", value.product_id);
+                if let Err(_) = printer.send(
+                    ErrorOperation::PrintAndChangeLedError(
+                        APP_NAME.to_string(),
+                        err_str.clone(),
+                        RGB::ERROR(),
+                        RGB::ERROR(),
+                        error_handeler::LedNumber::LED2,
+                    ),
+                    APP_NAME,
+                ) {
+                    error_send_failed = true;
+                    error_message.push(err_str);
                 }
-            }
+                None
+            },
         })
-        .collect::<Vec<BazaData>>();
+        .collect();
 
     context.conn.write_database(
         &prices_data,

@@ -369,7 +369,7 @@ impl AsyncConnection {
             .table_exists(table_name)
             .await
             .map_err(|e| (None, e.into()))?;
-
+        
         // if not create it and return
         if !table_exists {
             self.create_table(table_name, &required_columns)

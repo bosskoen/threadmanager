@@ -135,7 +135,7 @@ impl Manager {
                 .store(true, std::sync::atomic::Ordering::Relaxed);
             to_remove.push((name, handle.handle));
 
-            println!();
+            println!(); //TODO ?
         }
 
         // Reinsert the kept entries back into the map
@@ -499,6 +499,7 @@ fn thread_logic(
         }) {
             Ok(result) => {
                 match result {
+                    // no panic
                     Ok(_) => {
                         printer.print(
                             &format!("{} has stopped gracefully\nlast status:", &name),
@@ -541,6 +542,7 @@ fn thread_logic(
                     }
                 }
             }
+            //panic
             Err(error) => {
                 if let Err(_) = printer.send(
                     ErrorOperation::PrintAndChangeLedError(
@@ -599,6 +601,7 @@ fn thread_logic(
                 );
             }
         }
+
         drop(start);
         drop(lib); //TODO doesnt unload on unix
     }

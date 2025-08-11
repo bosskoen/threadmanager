@@ -23,6 +23,8 @@ pub struct Context {
     pub db_connection: SyncConnection,
     pub cleaning_profiles: Vec<CleaningProfiles>,
     pub table: String,
+
+    pub printer: Printer
 }
 
 impl Context {
@@ -49,14 +51,13 @@ impl Context {
             )?,
             printer
         )?;
-
         let db_connection = SyncConnection::new(
                 &user.user_name,
                 &user.password,
                 &user.host,
                 &user.database_name,
             )?;
-
+            
         let next_run = next_time_hour(settings.update_hour)?;
 
         Ok(Context {
@@ -69,15 +70,17 @@ impl Context {
             next_run,
             db_connection,
             cleaning_profiles: settings.cleaning_profiles,
-            table: settings.table_name
+            table: settings.table_name,
+            printer: printer.clone()
         })
     }
 
-    pub fn update_status(&self) ->Result<(), CleanError>{
+    pub fn update_status(&self, deleted: u64) ->Result<(), CleanError>{
         if let Ok(mut inner) = self.status.lock(){
             if let Some(status) = (**inner)
             .as_any_mut().downcast_mut::<CleanStatus>(){
                 status.time_ran += 1;
+                status.rows_deleted += deleted;
             }else {
                 return Err(CleanError::StatusError(
                     "downcast to MayorStatus".to_string(),
@@ -115,6 +118,7 @@ fn initialize_status(status: &Arc<Mutex<Box<dyn Status>>>) -> Result<(), CleanEr
     let new_status = CleanStatus {
         start_time: Local::now(),
         time_ran: 0,
+        rows_deleted: 0,
     };
 
     if let Ok(mut inner) = status.lock() {
@@ -130,13 +134,15 @@ struct CleanStatus {
     // rows cleaned TODO
     start_time: DateTime<Local>,
     time_ran: usize,
+    rows_deleted: u64
 }
 
 impl Status for CleanStatus {
     fn format(&self) -> String {
         format!(
-            "the bazaar cleaning ran {} times\nplugin is running sinds: {}, uptime: {} ",
+            "the bazaar cleaning ran {} times and has deleted {} rows\nplugin is running sinds: {}, uptime: {} ",
             self.time_ran,
+            self.rows_deleted,
             self.start_time.format("%Y %m-%d; %H:%M:%S"),
             format_duration(self.start_time, Local::now())
         )
@@ -154,6 +160,7 @@ pub enum CleanError {
     StatusError(String),
     FileReadError(String),
     TimeError(String),
+    ErrorThreadDown(String),
 }
 
 impl From<DataBaseError> for CleanError {
@@ -168,11 +175,12 @@ impl Display for CleanError {
         match self {
             CleanError::ParsingError(msg) => write!(f, "{msg}"),
             CleanError::DataBaseError(data_base_error) => {
-                        write!(f, "Database Error: {data_base_error}")
-                    }
+                                write!(f, "Database Error: {data_base_error}")
+                            }
             CleanError::StatusError(msg) => write!(f, "Status Error: failed to: {msg}"),
             CleanError::FileReadError(msg) => write!(f, "File Error: failed to read {msg}"),
             CleanError::TimeError(msg) => write!(f, "Time Pars Error: coudn't calulate next cleaning cicel:\n{msg}"),
+CleanError::ErrorThreadDown(msg) => write!(f, "Error Thread down:\n{msg}"),
         }
     }
 }

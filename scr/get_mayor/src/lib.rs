@@ -153,7 +153,7 @@ pub fn start(
             library::error_handeler::ErrorOperation::ChangeLed(
                 RGB::BLACK(),
                 false,
-                library::error_handeler::LedNumber::LED2,
+                library::error_handeler::LedNumber::LED3,
             ),
             APP_NAME,
         )

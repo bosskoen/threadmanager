@@ -4,7 +4,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
     thread,
-    time::{Duration},
+    time::{Duration, Instant},
 };
 
 use library::{
@@ -26,7 +26,6 @@ mod types;
 
 const APP_NAME: &str = "clean_bz";
 
-
 #[unsafe(no_mangle)]
 pub fn start(
     printer: Printer,
@@ -41,7 +40,7 @@ pub fn start(
             library::error_handeler::ErrorOperation::ChangeLed(
                 RGB::from_hex(0xac00e6),
                 false,
-                library::error_handeler::LedNumber::LED3,
+                library::error_handeler::LedNumber::LED4,
             ),
             APP_NAME,
         )
@@ -80,8 +79,8 @@ pub fn start(
         // Check how much time passed since last update
         if context.next_run <= now {
             // DO WORK
-            clean_db(&mut context)?;
-            context.update_status()?;
+            let delted = clean_db(&mut context)?;
+            context.update_status(delted)?;
         }
 
         now = Local::now();
@@ -123,7 +122,7 @@ pub fn start(
             library::error_handeler::ErrorOperation::ChangeLed(
                 RGB::BLACK(),
                 false,
-                library::error_handeler::LedNumber::LED3,
+                library::error_handeler::LedNumber::LED4,
             ),
             APP_NAME,
         )
@@ -162,41 +161,58 @@ pub fn confurm_db(
     {
         printer.named_print(APP_NAME, &msg, RGB::TRACE());
     }
-
     owner.grant_permission(user, table, &[PgPermission::Delete, PgPermission::Select])?;
-
     Ok(())
 }
 
-fn clean_db(context: &mut Context) -> Result<(), CleanError> {
+fn clean_db(context: &mut Context) -> Result<u64, CleanError> {
     context.next_run = next_time_hour(context.update_time)?;
 
     let (pool, rt) = context.db_connection.get_inner();
 
-    rt.block_on(delete_data(&pool, &context.cleaning_profiles, &context.table))?;
-
-    Ok(())
+    rt.block_on(delete_data(
+        &pool,
+        &context.cleaning_profiles,
+        &context.table,
+        &context.printer,
+    ))
 }
 
-async fn delete_data(pool: &PgPool, profiles: &[CleaningProfiles], table: &str) -> Result<(), CleanError> {
+async fn delete_data(
+    pool: &PgPool,
+    profiles: &[CleaningProfiles],
+    table: &str,
+    printer: &Printer,
+) -> Result<u64, CleanError> {
+    let start = Instant::now();
+
     let now = Local::now().timestamp_millis();
     const DAY: i64 = 24 * 3600 * 1000;
+
+    let mut num_deleted: Vec<u64> = Vec::new();
+
+    printer
+        .send(
+            ErrorOperation::ChangeLed(RGB::BLUE(), false, library::error_handeler::LedNumber::LED4),
+            APP_NAME,
+        )
+        .map_err(|_| CleanError::ErrorThreadDown("at start clean loop".to_string()))?;
 
     // 1 = interval
     // 2 = item to keep per interval
     //3 = day to keep data
     let string = format!(
         r#"
-ranked AS (
+WITH ranked AS (
     SELECT
         id,
         time_stamp,
         ROW_NUMBER() OVER (
-            PARTITION BY id, FLOOR(timestamp_ms / (({DAY} * $1 ) / $2))
+            PARTITION BY id, FLOOR(time_stamp / (({DAY} * $1 ) / $2))
             ORDER BY time_stamp ASC
         ) AS row_num
     FROM {table}
-    WHERE timestamp_ms < {now} - $3 * {DAY}
+    WHERE time_stamp < {now} - $3 * {DAY}
 )
 DELETE FROM {table}
 WHERE (id, time_stamp) IN (
@@ -207,16 +223,47 @@ WHERE (id, time_stamp) IN (
     );
 
     for profile in profiles {
-        sqlx::query(&string)
-            .bind(profile.sample_interval_days)
-            .bind(profile.samples_to_keep_per_interval)
-            .bind(profile.full_retention_days)
-            .execute(pool)
-            .await
-            .map_err(|e| DataBaseError::from(e))?;
+        num_deleted.push(
+            sqlx::query(&string)
+                .bind(profile.sample_interval_days)
+                .bind(profile.samples_to_keep_per_interval)
+                .bind(profile.full_retention_days)
+                .execute(pool)
+                .await
+                .map_err(|e| DataBaseError::from(e))?
+                .rows_affected(),
+        );
     }
+    sqlx::query(&format!("VACUUM ANALYZE {table}"))
+        .execute(pool)
+        .await
+        .map_err(|e| DataBaseError::from(e))?;
 
-    Ok(())
+    let total_clean = num_deleted.iter().sum();
+
+    #[cfg(debug_assertions)]
+    printer.named_print(
+        APP_NAME,
+        &format!(
+            "cleaned {} recoreds, in {}",
+            total_clean,
+            Instant::now().duration_since(start).as_secs()
+        ),
+        RGB::DEBUG(),
+    );
+
+    printer
+        .send(
+            ErrorOperation::ChangeLed(
+                RGB::from_hex(0xac00e6),
+                false,
+                library::error_handeler::LedNumber::LED4,
+            ),
+            APP_NAME,
+        )
+        .map_err(|_| CleanError::ErrorThreadDown("at stop clean loop".to_string()))?;
+
+    Ok(total_clean)
 }
 
 pub fn next_time_hour(hour: f32) -> Result<DateTime<Local>, CleanError> {
